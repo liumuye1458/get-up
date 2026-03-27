@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Code X Soundboard Workspace Placeholder</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top right, rgba(14, 165, 233, 0.18), transparent 24rem),
+          linear-gradient(180deg, #fff7ed 0%, #f8fafc 48%, #eff6ff 100%);
+        color: #0f172a;
+      }
+
+      .shell {
+        box-sizing: border-box;
+        min-height: 100vh;
+        padding: 32px;
+        display: grid;
+        gap: 20px;
+      }
+
+      .hero {
+        max-width: 760px;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #dbeafe;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+
+      h1 {
+        margin: 16px 0 10px;
+        font-size: 34px;
+        line-height: 1.1;
+      }
+
+      p {
+        margin: 0;
+        max-width: 640px;
+        color: #334155;
+        line-height: 1.6;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        min-height: 110px;
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      .card strong {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 18px;
+      }
+
+      .meta {
+        color: #64748b;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <span class="eyebrow">WebView2 Workspace Placeholder</span>
+        <h1>固定原生壳已经预留完成，下一步接中间工作区。</h1>
+        <p>
+          这个页面只是 WebView2 占位壳。后续会把现有 React 工作区逐步收缩到这里，
+          只承接分类标签、音效卡片、右键编辑和各模块内容页。
+        </p>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <strong>分类标签区</strong>
+          <div class="meta">承接我的音效主视图顶部分类切换。</div>
+        </article>
+        <article class="card">
+          <strong>40 张卡片按钮墙</strong>
+          <div class="meta">默认显示中等密度按钮墙，支持拖拽导入和左键直接播放。</div>
+        </article>
+        <article class="card">
+          <strong>右键编辑入口</strong>
+          <div class="meta">卡片右键后进入单卡编辑，不再让编辑逻辑抢主视图。</div>
+        </article>
+        <article class="card">
+          <strong>模块工作区</strong>
+          <div class="meta">左侧导航切换后，中间区承接标签、历史、备份、诊断和资源维护。</div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

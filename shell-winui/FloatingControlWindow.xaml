@@ -1,0 +1,37 @@
+<Window
+    x:Class="CodeXSoundboard.Shell.WinUI.FloatingControlWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Code X Soundboard 悬浮控制">
+
+    <Border Background="#0F172A" Padding="18">
+        <StackPanel Spacing="12">
+            <TextBlock
+                FontSize="18"
+                FontWeight="SemiBold"
+                Foreground="White"
+                Text="Code X Soundboard" />
+            <TextBlock
+                x:Name="FloatingStatusText"
+                Foreground="#CBD5E1"
+                Text="悬浮控制窗口已启用。" />
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Border Padding="10,8" CornerRadius="10" Background="#1E293B">
+                    <StackPanel>
+                        <TextBlock Foreground="White" Text="快捷键" />
+                        <TextBlock x:Name="FloatingHotkeyStateText" Foreground="#93C5FD" Text="Shift+Z" />
+                    </StackPanel>
+                </Border>
+                <Border Padding="10,8" CornerRadius="10" Background="#1E293B">
+                    <StackPanel>
+                        <TextBlock Foreground="White" Text="播放 / 暂停" />
+                        <TextBlock x:Name="FloatingPlaybackStateText" Foreground="#93C5FD" Text="Shift+Space" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

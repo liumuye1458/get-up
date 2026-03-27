@@ -1,0 +1,51 @@
+{
+  "name": "local-sfx-board",
+  "private": true,
+  "version": "1.0.0-rc.4",
+  "description": "Native WinUI desktop soundboard for live streaming and TikTok MC workflows.",
+  "author": "OpenAI Codex",
+  "type": "module",
+  "main": "scripts/block-legacy-runtime.mjs",
+  "scripts": {
+    "verify:native-architecture": "node scripts/enforce-native-architecture.mjs",
+    "dev": "npm run dev:native",
+    "dev:native": "npm run verify:native-architecture && dotnet run --project shell-winui/CodeXSoundboard.Shell.WinUI.csproj",
+    "dev:legacy-electron": "node scripts/block-legacy-runtime.mjs",
+    "build": "npm run build:native",
+    "build:native": "npm run verify:native-architecture && dotnet build shell-winui/CodeXSoundboard.Shell.WinUI.csproj -c Debug",
+    "lint": "eslint .",
+    "native:node": "node scripts/prepare-better-sqlite3.mjs --runtime=node",
+    "test:regression": "node --test tests/*.test.mjs",
+    "start": "npm run dev:native",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File ./scripts/dist-winui.ps1",
+    "dist:legacy-electron": "node scripts/block-legacy-runtime.mjs",
+    "dist:winui": "powershell -ExecutionPolicy Bypass -File ./scripts/dist-winui.ps1",
+    "validate:winui:publish": "powershell -ExecutionPolicy Bypass -File ./scripts/validate-winui-publish.ps1"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "i18next": "^25.10.9",
+    "music-metadata": "^11.12.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-i18next": "^16.6.6",
+    "wavesurfer.js": "^7.12.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "cross-env": "^10.1.0",
+    "electron": "^41.0.4",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.57.0",
+    "vite": "^8.0.1"
+  }
+}

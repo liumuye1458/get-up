@@ -1,0 +1,7 @@
+.workspace-web-root {
+  min-height: 100vh;
+}
+
+.workspace-web-root[data-shell='workspace-web'] {
+  isolation: isolate;
+}

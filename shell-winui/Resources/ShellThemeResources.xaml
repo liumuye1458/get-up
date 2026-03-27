@@ -1,0 +1,11 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="ShellWindowBackgroundBrush" Color="#0F1318" />
+    <SolidColorBrush x:Key="ShellChromeBackgroundBrush" Color="#131920" />
+    <SolidColorBrush x:Key="ShellLeftRailBackgroundBrush" Color="#151C24" />
+    <SolidColorBrush x:Key="ShellDrawerBackgroundBrush" Color="#141A21" />
+    <SolidColorBrush x:Key="ShellBorderBrush" Color="#242D37" />
+    <SolidColorBrush x:Key="ShellEmptyStateBackgroundBrush" Color="#18212B" />
+    <SolidColorBrush x:Key="ShellEmptyStateBorderBrush" Color="#2B3643" />
+</ResourceDictionary>

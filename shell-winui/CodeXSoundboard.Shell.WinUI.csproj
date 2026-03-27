@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>CodeXSoundboard.Shell.WinUI</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <DefaultItemExcludes>$(DefaultItemExcludes);artifacts\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.250916003" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.4" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="webview\**\*" />
+    <Content Remove="webview\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="docs\**\*.*" Condition="Exists('docs')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="CopyWinUIGeneratedPublishArtifacts" AfterTargets="Publish">
+    <ItemGroup>
+      <_GeneratedPublishArtifacts Include="$(TargetDir)App.xbf" Condition="Exists('$(TargetDir)App.xbf')" />
+      <_GeneratedPublishArtifacts Include="$(TargetDir)MainWindow.xbf" Condition="Exists('$(TargetDir)MainWindow.xbf')" />
+      <_GeneratedPublishArtifacts Include="$(TargetDir)FloatingControlWindow.xbf" Condition="Exists('$(TargetDir)FloatingControlWindow.xbf')" />
+      <_GeneratedPublishArtifacts Include="$(TargetDir)$(AssemblyName).pri" Condition="Exists('$(TargetDir)$(AssemblyName).pri')" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(_GeneratedPublishArtifacts)"
+      DestinationFiles="@(_GeneratedPublishArtifacts->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
+</Project>
