@@ -1,0 +1,50 @@
+QWidget {
+    background: #11111b;
+    color: #f1f5f9;
+    font-family: "Microsoft YaHei UI";
+    font-size: 12px;
+}
+
+QMainWindow, QFrame#AppFrame, QWidget#CentralPanel {
+    background: #11111b;
+}
+
+QLineEdit, QComboBox, QPushButton, QToolButton {
+    background: #1e1e30;
+    border: 1px solid #313147;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+
+QLineEdit:focus, QComboBox:focus, QPushButton:hover, QToolButton:hover {
+    border-color: #4a9eff;
+}
+
+QPushButton:pressed, QToolButton:pressed {
+    background: #2a2a42;
+}
+
+QScrollArea, QListWidget, QStackedWidget {
+    border: none;
+    background: transparent;
+}
+
+QStatusBar {
+    background: #0b0b12;
+    color: #9aa4bf;
+}
+
+QMenu {
+    background: #181824;
+    border: 1px solid #313147;
+    padding: 6px;
+}
+
+QMenu::item {
+    padding: 6px 20px;
+    border-radius: 6px;
+}
+
+QMenu::item:selected {
+    background: #2a3555;
+}

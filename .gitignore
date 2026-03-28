@@ -1,0 +1,38 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local data and generated artifacts
+build/
+dist/
+data/
+phase3b-temp/
+
+# Bundled ffmpeg binaries are re-downloadable and exceed GitHub size limits
+assets/ffmpeg/
+
+# Local verification screenshots
+launch-check.png
+final-pack-*.png
+p0_*.png
+p1-*.png
+phase*.png
+sound-edit-tab-*.png
+task*.png
+
+# Local test media and backup samples
+ffmpeg-import-test.mp3
+p0_drag_test.mp3
+test-sample.mp3
+test_ogg.ogg
+test_flac.flac
+test_wma.wma
+test_aac.aac
+test_backup.zip
+validation-source.wav
+validation-step1.wav
+phase3a-bgm-source.wav
+
+# Local environment noise
+.DS_Store
+Thumbs.db
