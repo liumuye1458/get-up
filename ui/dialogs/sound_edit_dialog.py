@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import os
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -10,6 +15,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSlider,
     QTabWidget,
@@ -18,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.audio_engine import audio_engine
+from core.hotkey_conflict import check_hotkey_conflict
 from core.i18n_manager import t
 from models.db import db
 from models.sound_effect import SoundEffect
@@ -71,15 +78,38 @@ class SoundEditDialog(QDialog):
         self.color_picker = ColorPicker(tab)
         self.fade_toggle = ToggleSwitch(tab)
         self.fade_toggle.toggled.connect(self._update_fade_enabled)
+
         self.fade_duration = QDoubleSpinBox(tab)
         self.fade_duration.setRange(0.1, 5.0)
         self.fade_duration.setSingleStep(0.1)
         self.fade_duration.setSuffix(" s")
 
-        layout.addRow("音效名称", self.name_input)
-        layout.addRow("卡片颜色", self.color_picker)
-        layout.addRow("淡入播放", self.fade_toggle)
-        layout.addRow("淡入时长", self.fade_duration)
+        self._path_display = QLineEdit(tab)
+        self._path_display.setReadOnly(True)
+        self._path_display.setMinimumWidth(100)
+        self._path_display.setMaximumWidth(300)
+        self._path_display.setStyleSheet("color:#888;")
+
+        self._open_dir_button = QPushButton(t("common.open_folder"), tab)
+        self._open_dir_button.setMinimumWidth(80)
+        self._open_dir_button.setFixedWidth(80)
+        self._open_dir_button.clicked.connect(self._open_file_dir)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(self._path_display, 1)
+        path_row.addWidget(self._open_dir_button, 0)
+
+        self._tag_combo = QComboBox(tab)
+        self._tag_combo.addItem(t("common.no_tag"), userData=0)
+        for tag in db.all_tags():
+            self._tag_combo.addItem(tag.name, userData=tag.id)
+
+        layout.addRow(t("sound_edit.name"), self.name_input)
+        layout.addRow(t("sound_edit.color"), self.color_picker)
+        layout.addRow(t("sound_edit.fade_in"), self.fade_toggle)
+        layout.addRow(t("common.fade_in_duration"), self.fade_duration)
+        layout.addRow(t("common.file_path"), path_row)
+        layout.addRow(t("common.assigned_tag"), self._tag_combo)
         return tab
 
     def _build_hotkey_tab(self) -> QWidget:
@@ -92,14 +122,14 @@ class SoundEditDialog(QDialog):
         self.hotkey_label.setStyleSheet("font-size: 28px; font-weight: 700;")
 
         buttons = QHBoxLayout()
-        self.record_hotkey_button = QPushButton("录制新快捷键", tab)
+        self.record_hotkey_button = QPushButton(t("sound_edit.record_new_hotkey"), tab)
         self.record_hotkey_button.clicked.connect(self._record_hotkey)
-        self.clear_hotkey_button = QPushButton("清除快捷键", tab)
+        self.clear_hotkey_button = QPushButton(t("sound_edit.clear_hotkey"), tab)
         self.clear_hotkey_button.clicked.connect(self._clear_hotkey)
         buttons.addWidget(self.record_hotkey_button)
         buttons.addWidget(self.clear_hotkey_button)
 
-        self.hotkey_hint = QLabel("按 ESC 或空白键取消录制", tab)
+        self.hotkey_hint = QLabel(t("sound_edit.hotkey_hint"), tab)
         self.hotkey_hint.setStyleSheet("color: #7f8aa3;")
         self.hotkey_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -139,23 +169,23 @@ class SoundEditDialog(QDialog):
         self.trim_end_spin.setSuffix(" s")
         self.trim_end_spin.valueChanged.connect(self._on_spin_trim_changed)
 
-        time_row.addWidget(QLabel("开始时间", tab))
+        time_row.addWidget(QLabel(t("common.start_time"), tab))
         time_row.addWidget(self.trim_start_spin)
-        time_row.addWidget(QLabel("结束时间", tab))
+        time_row.addWidget(QLabel(t("common.end_time"), tab))
         time_row.addWidget(self.trim_end_spin)
 
         action_row = QHBoxLayout()
-        self.preview_button = QPushButton("> 试听当前片段", tab)
+        self.preview_button = QPushButton(t("sound_edit.preview_current_clip"), tab)
         self.preview_button.clicked.connect(self._preview_clip)
-        self.stop_preview_button = QPushButton("[] 停止", tab)
+        self.stop_preview_button = QPushButton(t("sound_edit.stop_preview"), tab)
         self.stop_preview_button.clicked.connect(audio_engine.stop_all)
-        self.clear_trim_button = QPushButton("清除剪辑", tab)
+        self.clear_trim_button = QPushButton(t("common.clear_clip"), tab)
         self.clear_trim_button.clicked.connect(self._clear_trim)
         action_row.addWidget(self.preview_button)
         action_row.addWidget(self.stop_preview_button)
         action_row.addWidget(self.clear_trim_button)
 
-        hint = QLabel("拖动波形两端的标记点调整剪辑范围", tab)
+        hint = QLabel(t("sound_edit.clip_hint"), tab)
         hint.setStyleSheet("color: #7f8aa3;")
 
         layout.addLayout(info_row)
@@ -182,8 +212,8 @@ class SoundEditDialog(QDialog):
         self.speed_slider.valueChanged.connect(lambda value: self.speed_value.setText(f"{value / 10:.1f}x"))
 
         for title, widget, label in [
-            ("音量", self.volume_slider, self.volume_value),
-            ("播放速度", self.speed_slider, self.speed_value),
+            (t("common.volume"), self.volume_slider, self.volume_value),
+            (t("common.speed"), self.speed_slider, self.speed_value),
         ]:
             row = QHBoxLayout()
             row.addWidget(QLabel(title, tab))
@@ -191,7 +221,7 @@ class SoundEditDialog(QDialog):
             row.addWidget(label)
             layout.addLayout(row)
 
-        self.loop_cb = QCheckBox("循环播放（播完自动重头）", tab)
+        self.loop_cb = QCheckBox(t("common.loop_playback"), tab)
         layout.addWidget(self.loop_cb)
         layout.addStretch(1)
         return tab
@@ -202,6 +232,13 @@ class SoundEditDialog(QDialog):
         self.fade_toggle.setChecked(self._sound.fade_in)
         self.fade_duration.setValue(self._sound.fade_in_duration)
         self._update_fade_enabled(self._sound.fade_in)
+        self._path_display.setText(str(Path(self._sound.library_path).resolve()))
+
+        current_tags = self._sound.tags or []
+        if current_tags:
+            combo_index = self._tag_combo.findData(current_tags[0])
+            if combo_index >= 0:
+                self._tag_combo.setCurrentIndex(combo_index)
 
         self._set_hotkey_label(self._preview_hotkey)
 
@@ -219,7 +256,7 @@ class SoundEditDialog(QDialog):
         self.loop_cb.setChecked(self._sound.loop)
 
     def _set_hotkey_label(self, value: str) -> None:
-        self.hotkey_label.setText(value or "未设置")
+        self.hotkey_label.setText(value or t("settings.hotkey_unset"))
 
     def _update_fade_enabled(self, enabled: bool) -> None:
         self.fade_duration.setEnabled(enabled)
@@ -254,8 +291,8 @@ class SoundEditDialog(QDialog):
 
     def _update_duration_labels(self) -> None:
         clipped = max(0.0, self.trim_end_spin.value() - self.trim_start_spin.value())
-        self.total_duration_label.setText(f"总时长：{self._duration:.2f}s")
-        self.clipped_duration_label.setText(f"剪辑后：{clipped:.2f}s")
+        self.total_duration_label.setText(t("common.total_duration", duration=f"{self._duration:.2f}s"))
+        self.clipped_duration_label.setText(t("common.clipped_duration", duration=f"{clipped:.2f}s"))
 
     def _preview_clip(self) -> None:
         preview = SoundEffect.from_dict(self._sound.to_dict())
@@ -269,6 +306,11 @@ class SoundEditDialog(QDialog):
         preview.loop = self.loop_cb.isChecked()
         audio_engine.play_sound(preview)
 
+    def _open_file_dir(self) -> None:
+        path = str(Path(self._sound.library_path).resolve())
+        dir_path = os.path.dirname(path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(dir_path))
+
     def _clear_trim(self) -> None:
         self.trim_start_spin.setValue(0.0)
         self.trim_end_spin.setValue(self._duration)
@@ -276,9 +318,29 @@ class SoundEditDialog(QDialog):
         self._update_duration_labels()
 
     def _save(self) -> None:
+        if self._preview_hotkey:
+            conflict = check_hotkey_conflict(
+                self._preview_hotkey,
+                exclude_type="sound",
+                exclude_id=self._sound.id,
+            )
+            if conflict is not None:
+                conflict_name = conflict["name"]
+                if conflict["type"] == "system":
+                    conflict_name = t(conflict_name)
+                QMessageBox.warning(
+                    self,
+                    t("hotkey_conflict_title"),
+                    t(
+                        f"hotkey_conflict_{conflict['type']}",
+                        hotkey=self._preview_hotkey,
+                        name=conflict_name,
+                    ),
+                )
+                return
+
         self._sound.name = self.name_input.text().strip()[:50] or self._sound.name
         self._sound.color = self.color_picker.color()
-        print(f"[DEBUG] save color: {self._sound.color}")
         self._sound.fade_in = self.fade_toggle.isChecked()
         self._sound.fade_in_duration = self.fade_duration.value()
         self._sound.hotkey = self._preview_hotkey
@@ -289,5 +351,12 @@ class SoundEditDialog(QDialog):
         self._sound.speed = self.speed_slider.value() / 10.0
         self._sound.loop = self.loop_cb.isChecked()
         self._sound.enabled = True
+
         db.update_sound(self._sound)
+
+        selected_tag_id = self._tag_combo.currentData()
+        if selected_tag_id:
+            db.set_sound_tags(self._sound.id, [str(selected_tag_id)])
+        else:
+            db.set_sound_tags(self._sound.id, [])
         self.accept()

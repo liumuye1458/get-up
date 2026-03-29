@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -6,25 +6,31 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
-from config import BGM_DIR, SUPPORTED_AUDIO_FORMATS
+from config import BGM_DIR, PRESET_COLORS, SUPPORTED_AUDIO_FORMATS
 from core.audio_engine import BGMPlayer
 from core.i18n_manager import I18nManager, t
 from models.bgm import BackgroundMusic
 from models.db import db
 from ui.dialogs.bgm_edit_dialog import BgmEditDialog
 from utils.audio_utils import import_audio_file, read_audio_duration
+
+FILE_DIALOG_AUDIO_FILTER = "Audio Files (*.mp3 *.wav *.ogg *.flac *.wma *.aac *.aiff *.opus);;All Files (*)"
 
 
 class BgmListWidget(QListWidget):
@@ -51,6 +57,7 @@ class BgmListItem(QWidget):
         super().__init__(parent)
         self.bgm = bgm
         self.setFixedHeight(56)
+        self._apply_row_color()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -75,14 +82,34 @@ class BgmListItem(QWidget):
         center.addWidget(self.sub_label)
         layout.addLayout(center, 1)
 
-        self.preview_button = QPushButton(">", self)
+        self.preview_button = QPushButton(self)
         self.preview_button.setFixedSize(28, 28)
+        self.preview_button.setIcon(
+            QApplication.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        )
+        self.preview_button.setToolTip(t("bgm.menu.play"))
         self.preview_button.clicked.connect(lambda: self.preview_requested.emit(self.bgm.id))
-        self.more_button = QPushButton("...", self)
-        self.more_button.setFixedSize(28, 28)
-        self.more_button.clicked.connect(lambda: self.menu_requested.emit(self.bgm.id, self.more_button))
         layout.addWidget(self.preview_button)
-        layout.addWidget(self.more_button)
+
+    def _apply_row_color(self) -> None:
+        if not self.bgm.color:
+            self.setStyleSheet("")
+            return
+        hex_color = self.bgm.color.lstrip("#")
+        if len(hex_color) != 6:
+            self.setStyleSheet("")
+            return
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+        except ValueError:
+            self.setStyleSheet("")
+            return
+        self.setStyleSheet(
+            self.styleSheet()
+            + f" background: rgba({r},{g},{b},0.25); border-radius: 6px;"
+        )
 
     def _subtitle(self) -> str:
         try:
@@ -92,7 +119,11 @@ class BgmListItem(QWidget):
         mins = int(duration // 60)
         secs = int(duration % 60)
         hotkey = self.bgm.hotkey or t("bgm.hotkey_unset")
-        return f"{mins}:{secs:02d} · {hotkey}"
+        return t("bgm.subtitle", duration=f"{mins}:{secs:02d}", hotkey=hotkey)
+
+    def contextMenuEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        self.menu_requested.emit(self.bgm.id, self)
+        event.accept()
 
 
 class BgmPage(QWidget):
@@ -102,20 +133,36 @@ class BgmPage(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self._search_text = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        header = QHBoxLayout()
-        self.title_label = QLabel(self)
-        self.title_label.setStyleSheet("font-size: 16px; font-weight: 700;")
+        self._search_input = QLineEdit(self)
+        self._search_input.setPlaceholderText(self._search_placeholder())
+        self._search_input.setStyleSheet(
+            """
+            QLineEdit {
+                background: #252540; border: 1px solid #333360;
+                border-radius: 6px; color: #ccc; font-size: 13px;
+                padding: 8px 12px;
+            }
+            QLineEdit:focus { border-color: #4a4a80; }
+            """
+        )
+        self._search_input.textChanged.connect(self._on_search_changed)
+
         self.add_button = QPushButton(self)
+        self.add_button.setFixedWidth(140)
         self.add_button.clicked.connect(self._add_bgms)
-        header.addWidget(self.title_label)
-        header.addStretch(1)
-        header.addWidget(self.add_button)
-        layout.addLayout(header)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(12)
+        top_row.addWidget(self._search_input, 1)
+        top_row.addWidget(self.add_button, 0)
+        layout.addLayout(top_row)
 
         self.list_widget = BgmListWidget(self)
         self.list_widget.setSpacing(6)
@@ -138,15 +185,30 @@ class BgmPage(QWidget):
         for bgm in db.all_bgms():
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, bgm.id)
+            item.setData(Qt.ItemDataRole.UserRole + 1, bgm.name.lower())
             widget = BgmListItem(bgm, self.list_widget)
             widget.preview_requested.connect(self.play_requested.emit)
             widget.menu_requested.connect(self._show_item_menu)
             item.setSizeHint(widget.sizeHint())
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, widget)
+        self._apply_search_filter()
 
     def import_files(self, paths: list[Path]) -> None:
-        for source_path in paths:
+        if not paths:
+            return
+
+        progress = None
+        if len(paths) > 1:
+            progress = QProgressDialog(t("bgm.import_progress"), t("common.cancel"), 0, len(paths), self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+        for index, source_path in enumerate(paths):
+            if progress and progress.wasCanceled():
+                break
+
             stored = import_audio_file(source_path, BGM_DIR)
             bgm = BackgroundMusic.create(
                 name=source_path.stem,
@@ -154,12 +216,24 @@ class BgmPage(QWidget):
                 library_path=str(stored),
                 sort_order=db.next_bgm_sort_order(),
             )
+            bgm.color = PRESET_COLORS[db.next_bgm_sort_order() % len(PRESET_COLORS)]
             db.add_bgm(bgm)
 
+            if progress:
+                progress.setLabelText(t("bgm.import_progress_item", current=index + 1, total=len(paths), name=source_path.name))
+                progress.setValue(index + 1)
+                QApplication.processEvents()
+
+        if progress:
+            progress.close()
+
     def _add_bgms(self) -> None:
-        exts = " ".join(SUPPORTED_AUDIO_FORMATS)
-        filter_str = f"音频文件 ({exts})"
-        files, _ = QFileDialog.getOpenFileNames(self, "选择音频文件", "", filter_str)
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            t("common.select_audio_files"),
+            "",
+            FILE_DIALOG_AUDIO_FILTER,
+        )
         if not files:
             return
         try:
@@ -273,7 +347,21 @@ class BgmPage(QWidget):
         current = getattr(parent, "_current_bgm_id", None)
         return str(current) if current else None
 
+    def _on_search_changed(self, text: str) -> None:
+        self._search_text = text.strip().lower()
+        self._apply_search_filter()
+
+    def _apply_search_filter(self) -> None:
+        keyword = self._search_text
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            name = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
+            item.setHidden(bool(keyword) and keyword not in name)
+
     def _retranslate_ui(self, *_args) -> None:
-        self.title_label.setText(t("bgm.title"))
         self.add_button.setText(t("bgm.add"))
+        self._search_input.setPlaceholderText(self._search_placeholder())
         self.refresh()
+
+    def _search_placeholder(self) -> str:
+        return "搜索背景音乐..." if I18nManager.current_language() == "zh" else "Search background music..."

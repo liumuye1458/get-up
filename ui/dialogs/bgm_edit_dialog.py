@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import os
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -9,6 +13,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSlider,
     QTabWidget,
@@ -17,6 +22,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.audio_engine import audio_engine
+from core.hotkey_conflict import check_hotkey_conflict
+from core.i18n_manager import t
 from models.bgm import BackgroundMusic
 from models.db import db
 from models.sound_effect import SoundEffect
@@ -36,17 +43,17 @@ class BgmEditDialog(QDialog):
 
         self.setModal(True)
         self.setFixedSize(580, 460)
-        self.setWindowTitle(f"编辑 BGM - {self.bgm.name}")
+        self.setWindowTitle(f"{t('bgm_edit.title')} - {self.bgm.name}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
         self.tabs = QTabWidget(self)
-        self.tabs.addTab(self._build_basic_tab(), "基本设置")
-        self.tabs.addTab(self._build_hotkey_tab(), "快捷键")
-        self.tabs.addTab(self._build_clip_tab(), "音效剪辑")
-        self.tabs.addTab(self._build_personal_tab(), "个性化")
+        self.tabs.addTab(self._build_basic_tab(), t("edit.tab.basic"))
+        self.tabs.addTab(self._build_hotkey_tab(), t("edit.tab.hotkey"))
+        self.tabs.addTab(self._build_clip_tab(), t("edit.tab.clip"))
+        self.tabs.addTab(self._build_personal_tab(), t("edit.tab.personal"))
         self.tabs.setCurrentIndex(max(0, min(initial_tab, 3)))
         root.addWidget(self.tabs, 1)
 
@@ -70,15 +77,32 @@ class BgmEditDialog(QDialog):
         self.color_picker = ColorPicker(tab)
         self.fade_toggle = ToggleSwitch(tab)
         self.fade_toggle.toggled.connect(self._update_fade_enabled)
+
         self.fade_duration = QDoubleSpinBox(tab)
         self.fade_duration.setRange(0.1, 5.0)
         self.fade_duration.setSingleStep(0.1)
         self.fade_duration.setSuffix(" s")
 
-        layout.addRow("名称", self.name_input)
-        layout.addRow("颜色", self.color_picker)
-        layout.addRow("淡入", self.fade_toggle)
-        layout.addRow("淡入时长", self.fade_duration)
+        self._path_display = QLineEdit(tab)
+        self._path_display.setReadOnly(True)
+        self._path_display.setMinimumWidth(100)
+        self._path_display.setMaximumWidth(300)
+        self._path_display.setStyleSheet("color:#888;")
+
+        self._open_dir_button = QPushButton(t("common.open_folder"), tab)
+        self._open_dir_button.setMinimumWidth(80)
+        self._open_dir_button.setFixedWidth(80)
+        self._open_dir_button.clicked.connect(self._open_file_dir)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(self._path_display, 1)
+        path_row.addWidget(self._open_dir_button, 0)
+
+        layout.addRow(t("common.name"), self.name_input)
+        layout.addRow(t("common.color"), self.color_picker)
+        layout.addRow(t("common.fade_in"), self.fade_toggle)
+        layout.addRow(t("common.fade_in_duration"), self.fade_duration)
+        layout.addRow(t("common.file_path"), path_row)
         return tab
 
     def _build_hotkey_tab(self) -> QWidget:
@@ -91,14 +115,14 @@ class BgmEditDialog(QDialog):
         self.hotkey_label.setStyleSheet("font-size: 28px; font-weight: 700;")
 
         buttons = QHBoxLayout()
-        self.record_hotkey_button = QPushButton("录制", tab)
+        self.record_hotkey_button = QPushButton(t("common.record"), tab)
         self.record_hotkey_button.clicked.connect(self._record_hotkey)
-        self.clear_hotkey_button = QPushButton("清除", tab)
+        self.clear_hotkey_button = QPushButton(t("settings.clear"), tab)
         self.clear_hotkey_button.clicked.connect(self._clear_hotkey)
         buttons.addWidget(self.record_hotkey_button)
         buttons.addWidget(self.clear_hotkey_button)
 
-        self.hotkey_hint = QLabel("按下快捷键进行录制，ESC 取消", tab)
+        self.hotkey_hint = QLabel(t("bgm_edit.hotkey_hint"), tab)
         self.hotkey_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hotkey_hint.setStyleSheet("color: #7f8aa3;")
 
@@ -131,28 +155,30 @@ class BgmEditDialog(QDialog):
         self.trim_start_spin.setSingleStep(0.01)
         self.trim_start_spin.setSuffix(" s")
         self.trim_start_spin.valueChanged.connect(self._on_spin_trim_changed)
+
         self.trim_end_spin = QDoubleSpinBox(tab)
         self.trim_end_spin.setRange(0.01, max(0.01, self._duration))
         self.trim_end_spin.setSingleStep(0.01)
         self.trim_end_spin.setSuffix(" s")
         self.trim_end_spin.valueChanged.connect(self._on_spin_trim_changed)
-        time_row.addWidget(QLabel("开始", tab))
+
+        time_row.addWidget(QLabel(t("common.start_time"), tab))
         time_row.addWidget(self.trim_start_spin)
-        time_row.addWidget(QLabel("结束", tab))
+        time_row.addWidget(QLabel(t("common.end_time"), tab))
         time_row.addWidget(self.trim_end_spin)
 
         action_row = QHBoxLayout()
-        self.preview_button = QPushButton("试听片段", tab)
+        self.preview_button = QPushButton(t("common.preview_clip"), tab)
         self.preview_button.clicked.connect(self._preview_clip)
-        self.stop_preview_button = QPushButton("停止", tab)
+        self.stop_preview_button = QPushButton(t("common.stop"), tab)
         self.stop_preview_button.clicked.connect(audio_engine.stop_all)
-        self.clear_trim_button = QPushButton("清除剪辑", tab)
+        self.clear_trim_button = QPushButton(t("common.clear_clip"), tab)
         self.clear_trim_button.clicked.connect(self._clear_trim)
         action_row.addWidget(self.preview_button)
         action_row.addWidget(self.stop_preview_button)
         action_row.addWidget(self.clear_trim_button)
 
-        hint = QLabel("拖动波形两侧的标记，调整 BGM 剪辑范围", tab)
+        hint = QLabel(t("bgm_edit.clip_hint"), tab)
         hint.setStyleSheet("color: #7f8aa3;")
 
         layout.addLayout(info_row)
@@ -176,15 +202,13 @@ class BgmEditDialog(QDialog):
         self.speed_slider = QSlider(Qt.Orientation.Horizontal, tab)
         self.speed_slider.setRange(5, 20)
         self.speed_value = QLabel(tab)
-        self.speed_slider.valueChanged.connect(
-            lambda value: self.speed_value.setText(f"{value / 10:.1f}x")
-        )
+        self.speed_slider.valueChanged.connect(lambda value: self.speed_value.setText(f"{value / 10:.1f}x"))
 
         self.loop_toggle = ToggleSwitch(tab)
 
         for title, widget, label in [
-            ("音量", self.volume_slider, self.volume_value),
-            ("播放速度", self.speed_slider, self.speed_value),
+            (t("common.volume"), self.volume_slider, self.volume_value),
+            (t("common.speed"), self.speed_slider, self.speed_value),
         ]:
             row = QHBoxLayout()
             row.addWidget(QLabel(title, tab))
@@ -193,7 +217,7 @@ class BgmEditDialog(QDialog):
             layout.addLayout(row)
 
         loop_row = QHBoxLayout()
-        loop_row.addWidget(QLabel("循环播放", tab))
+        loop_row.addWidget(QLabel(t("common.loop_playback"), tab))
         loop_row.addWidget(self.loop_toggle)
         loop_row.addStretch(1)
         layout.addLayout(loop_row)
@@ -202,10 +226,11 @@ class BgmEditDialog(QDialog):
 
     def _load_values(self) -> None:
         self.name_input.setText(self.bgm.name)
-        self.color_picker.set_color("#1a6b8a")
+        self.color_picker.set_color(self.bgm.color)
         self.fade_toggle.setChecked(self.bgm.fade_in)
         self.fade_duration.setValue(self.bgm.fade_in_duration)
         self._update_fade_enabled(self.bgm.fade_in)
+        self._path_display.setText(str(Path(self.bgm.library_path).resolve()))
         self._set_hotkey_label(self._preview_hotkey)
 
         self.waveform.load_audio(self.bgm.library_path)
@@ -222,7 +247,7 @@ class BgmEditDialog(QDialog):
         self.loop_toggle.setChecked(self.bgm.loop)
 
     def _set_hotkey_label(self, value: str) -> None:
-        self.hotkey_label.setText(value or "未设置")
+        self.hotkey_label.setText(value or t("settings.hotkey_unset"))
 
     def _update_fade_enabled(self, enabled: bool) -> None:
         self.fade_duration.setEnabled(enabled)
@@ -257,15 +282,15 @@ class BgmEditDialog(QDialog):
 
     def _update_duration_labels(self) -> None:
         clipped = max(0.0, self.trim_end_spin.value() - self.trim_start_spin.value())
-        self.total_duration_label.setText(f"总时长：{self._duration:.2f}s")
-        self.clipped_duration_label.setText(f"剪辑后：{clipped:.2f}s")
+        self.total_duration_label.setText(t("common.total_duration", duration=f"{self._duration:.2f}s"))
+        self.clipped_duration_label.setText(t("common.clipped_duration", duration=f"{clipped:.2f}s"))
 
     def _preview_clip(self) -> None:
         preview = SoundEffect.create(
             name=self.bgm.name,
             original_filename=self.bgm.original_filename,
             library_path=self.bgm.library_path,
-            color="#1a6b8a",
+            color=self.color_picker.color(),
             sort_order=0,
         )
         preview.trim_start = self.trim_start_spin.value()
@@ -277,6 +302,11 @@ class BgmEditDialog(QDialog):
         preview.enabled = True
         audio_engine.play_sound(preview)
 
+    def _open_file_dir(self) -> None:
+        path = str(Path(self.bgm.library_path).resolve())
+        dir_path = os.path.dirname(path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(dir_path))
+
     def _clear_trim(self) -> None:
         self.trim_start_spin.setValue(0.0)
         self.trim_end_spin.setValue(self._duration)
@@ -284,7 +314,29 @@ class BgmEditDialog(QDialog):
         self._update_duration_labels()
 
     def _save(self) -> None:
+        if self._preview_hotkey:
+            conflict = check_hotkey_conflict(
+                self._preview_hotkey,
+                exclude_type="bgm",
+                exclude_id=self.bgm.id,
+            )
+            if conflict is not None:
+                conflict_name = conflict["name"]
+                if conflict["type"] == "system":
+                    conflict_name = t(conflict_name)
+                QMessageBox.warning(
+                    self,
+                    t("hotkey_conflict_title"),
+                    t(
+                        f"hotkey_conflict_{conflict['type']}",
+                        hotkey=self._preview_hotkey,
+                        name=conflict_name,
+                    ),
+                )
+                return
+
         self.bgm.name = self.name_input.text().strip()[:50] or self.bgm.name
+        self.bgm.color = self.color_picker.color()
         self.bgm.fade_in = self.fade_toggle.isChecked()
         self.bgm.fade_in_duration = self.fade_duration.value()
         self.bgm.hotkey = self._preview_hotkey

@@ -12,12 +12,14 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from config import SUPPORTED_LANGUAGES
 from core.audio_engine import audio_engine
+from core.hotkey_conflict import check_hotkey_conflict
 from core.hotkey_manager import hotkey_manager
 from core.i18n_manager import I18nManager, t
 from models.db import db
@@ -59,7 +61,7 @@ class SettingsPage(QWidget):
         self._grp_audio, audio_layout = self._create_group(layout)
         self._device_label = QLabel(self)
         self._device_combo = QComboBox(self)
-        self._device_combo.setMaximumWidth(260)
+        self._device_combo.setFixedWidth(220)
         self._device_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
@@ -71,6 +73,8 @@ class SettingsPage(QWidget):
         self._hotkey_mode_label = QLabel(self)
         self._rb_global = QRadioButton(self)
         self._rb_local = QRadioButton(self)
+        self._rb_global.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self._rb_local.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._rb_global.toggled.connect(self._on_hotkey_mode_changed)
         self._rb_local.toggled.connect(self._on_hotkey_mode_changed)
         mode_row = QHBoxLayout()
@@ -82,10 +86,10 @@ class SettingsPage(QWidget):
 
         for key in [
             "stop_all",
+            "stop_all_music",
             "bgm_play_pause",
             "bgm_vol_up",
             "bgm_vol_down",
-            "toggle_hotkey_mode",
             "toggle_window",
             "toggle_floating",
         ]:
@@ -103,21 +107,6 @@ class SettingsPage(QWidget):
         self._floating_cb = QCheckBox(self)
         self._floating_cb.toggled.connect(self._on_floating_toggled)
         floating_layout.addWidget(self._floating_cb)
-
-        self._grp_backup, backup_layout = self._create_group(layout)
-        self._backup_hint = QLabel(self)
-        self._backup_hint.setWordWrap(True)
-        backup_layout.addWidget(self._backup_hint)
-
-        backup_buttons = QHBoxLayout()
-        self._backup_export_btn = QPushButton(self)
-        self._backup_export_btn.clicked.connect(self._on_backup_export)
-        self._backup_import_btn = QPushButton(self)
-        self._backup_import_btn.clicked.connect(self._on_backup_import)
-        backup_buttons.addWidget(self._backup_export_btn)
-        backup_buttons.addWidget(self._backup_import_btn)
-        backup_buttons.addStretch(1)
-        backup_layout.addLayout(backup_buttons)
 
         layout.addStretch(1)
         scroll.setWidget(inner)
@@ -146,29 +135,30 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         name_label = QLabel(container)
-        name_label.setFixedWidth(180)
+        name_label.setMinimumWidth(100)
+        name_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
         display_label = QLabel(container)
-        display_label.setFixedWidth(180)
+        display_label.setMinimumWidth(100)
+        display_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         display_label.setStyleSheet(
             "background:#1e1e30; border-radius:4px; padding:2px 8px; color:#aaaacc;"
         )
 
         record_btn = QPushButton(container)
         record_btn.setObjectName("RecordButton")
-        record_btn.setFixedWidth(72)
+        record_btn.setFixedWidth(75)
         record_btn.clicked.connect(lambda _, current=key: self._on_record(current))
 
         clear_btn = QPushButton(container)
         clear_btn.setObjectName("ClearButton")
-        clear_btn.setFixedWidth(72)
+        clear_btn.setFixedWidth(75)
         clear_btn.clicked.connect(lambda _, current=key: self._on_clear(current))
 
-        layout.addWidget(name_label)
-        layout.addWidget(display_label)
-        layout.addWidget(record_btn)
-        layout.addWidget(clear_btn)
-        layout.addStretch(1)
+        layout.addWidget(name_label, 0)
+        layout.addWidget(display_label, 1)
+        layout.addWidget(record_btn, 0)
+        layout.addWidget(clear_btn, 0)
 
         self._hotkey_rows[key] = (name_label, display_label, record_btn, clear_btn)
         return container
@@ -183,19 +173,27 @@ class SettingsPage(QWidget):
         if not new_hotkey:
             return
 
-        hotkeys = self._current_hotkeys()
-        for existing_key, existing_value in hotkeys.items():
-            if existing_key != key and existing_value == new_hotkey:
-                result = QMessageBox.question(
-                    self,
-                    "快捷键冲突",
-                    f"该快捷键已被「{t('settings.hotkey.' + existing_key)}」使用，是否替换？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if result != QMessageBox.StandardButton.Yes:
-                    return
-                hotkeys[existing_key] = ""
+        conflict = check_hotkey_conflict(
+            new_hotkey,
+            exclude_type="system",
+            exclude_id=key,
+        )
+        if conflict is not None:
+            conflict_name = conflict["name"]
+            if conflict["type"] == "system":
+                conflict_name = t(conflict_name)
+            QMessageBox.warning(
+                self,
+                t("hotkey_conflict_title"),
+                t(
+                    f"hotkey_conflict_{conflict['type']}",
+                    hotkey=new_hotkey,
+                    name=conflict_name,
+                ),
+            )
+            return
 
+        hotkeys = self._current_hotkeys()
         hotkeys[key] = new_hotkey
         db.update_config({"hotkeys": hotkeys})
         if self._mw is not None:
@@ -244,23 +242,15 @@ class SettingsPage(QWidget):
             return
         self.floating_visibility_changed.emit(checked)
 
-    def _on_backup_export(self) -> None:
-        if self._mw is not None and hasattr(self._mw, "backup_page"):
-            self._mw.backup_page._on_export()
-
-    def _on_backup_import(self) -> None:
-        if self._mw is not None and hasattr(self._mw, "backup_page"):
-            self._mw.backup_page._on_import()
-
     def _populate_devices(self) -> None:
         current = db.config().get("output_device", "default")
         devices = audio_engine.list_output_devices()
         self._device_combo.blockSignals(True)
         self._device_combo.clear()
-        self._device_combo.addItem(t("bottom.system_default"), None)
         for device in devices:
-            self._device_combo.addItem(str(device["name"]), device["index"])
-        index = self._device_combo.findData(None if current == "default" else current)
+            value = None if device["index"] == -1 else device["index"]
+            self._device_combo.addItem(str(device["name"]), value)
+        index = self._device_combo.findData(None if current in {"default", -1} else current)
         if index < 0:
             index = 0
         self._device_combo.setCurrentIndex(index)
@@ -271,14 +261,17 @@ class SettingsPage(QWidget):
         current = dict(config.get("hotkeys", {}))
         defaults = {
             "stop_all": "",
+            "stop_all_music": "",
             "bgm_play_pause": "",
             "bgm_vol_up": "",
             "bgm_vol_down": "",
-            "toggle_hotkey_mode": "",
             "toggle_window": "",
             "toggle_floating": "",
         }
         defaults.update({key: str(value) for key, value in current.items()})
+        if not defaults.get("stop_all_music") and defaults.get("toggle_hotkey_mode"):
+            defaults["stop_all_music"] = str(defaults.get("toggle_hotkey_mode", ""))
+        defaults.pop("toggle_hotkey_mode", None)
         return defaults
 
     def load_from_config(self) -> None:
@@ -323,11 +316,6 @@ class SettingsPage(QWidget):
 
         self._grp_floating.setTitle(t("settings.section.floating"))
         self._floating_cb.setText(t("settings.show_floating"))
-
-        self._grp_backup.setTitle(t("nav.backup"))
-        self._backup_hint.setText(t("backup.desc"))
-        self._backup_export_btn.setText(t("backup.export_button"))
-        self._backup_import_btn.setText(t("backup.import_button"))
 
         for key, (name_label, display_label, record_btn, clear_btn) in self._hotkey_rows.items():
             name_label.setText(t(f"settings.hotkey.{key}"))

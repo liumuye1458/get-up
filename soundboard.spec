@@ -18,8 +18,12 @@ a = Analysis(
         "scipy",
         "scipy.signal",
         "pyqtgraph",
-        "keyboard",
         "pydub",
+        "pynput",
+        "pynput.keyboard",
+        "pynput.keyboard._win32",
+        "pynput._util",
+        "pynput._util.win32",
     ],
     hookspath=[],
     runtime_hooks=[],
@@ -34,13 +38,13 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="HOTA音效板",
+    name="HOTA SoundPad",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     console=False,
-    icon="assets/icons/app.png",
+    icon="assets/icon.ico",
 )
 
 coll = COLLECT(
@@ -50,5 +54,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="HOTA音效板",
+    name="HOTA SoundPad",
 )

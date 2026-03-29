@@ -7,6 +7,7 @@ build/
 dist/
 data/
 phase3b-temp/
+installer_output/
 
 # Bundled ffmpeg binaries are re-downloadable and exceed GitHub size limits
 assets/ffmpeg/
@@ -19,6 +20,18 @@ p1-*.png
 phase*.png
 sound-edit-tab-*.png
 task*.png
+bgm-single-play-button.png
+bottom-bar-*.png
+bugfix-*.png
+flowlayout-*.png
+progress-*.png
+screenshot_bottombar.png
+statusbar-*.png
+v3-*.png
+v4-*.png
+
+# Local reports
+i18n_audit_report.txt
 
 # Local test media and backup samples
 ffmpeg-import-test.mp3

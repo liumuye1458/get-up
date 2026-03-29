@@ -190,16 +190,31 @@ class AudioEngine(QObject):
 
     @staticmethod
     def list_output_devices() -> list[dict[str, int | str]]:
-        devices = sd.query_devices()
-        seen_names: set[str] = set()
-        result: list[dict[str, int | str]] = []
-        for index, device in enumerate(devices):
+        result: list[dict[str, int | str]] = [{"index": -1, "name": "系统默认"}]
+
+        try:
+            host_apis = sd.query_hostapis()
+            wasapi_index = next(
+                (
+                    index
+                    for index, api in enumerate(host_apis)
+                    if "WASAPI" in str(api.get("name", ""))
+                ),
+                None,
+            )
+        except Exception:
+            wasapi_index = None
+
+        seen: set[str] = set()
+        for index, device in enumerate(sd.query_devices()):
             if int(device["max_output_channels"]) < 1:
                 continue
-            name = str(device["name"]).strip()
-            if name in seen_names:
+            if wasapi_index is not None and int(device.get("hostapi", -1)) != wasapi_index:
                 continue
-            seen_names.add(name)
+            name = str(device["name"]).strip()
+            if name in seen:
+                continue
+            seen.add(name)
             result.append({"index": index, "name": name})
         return result
 

@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtGui import QAction, QCloseEvent, QIcon
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QMenu, QMessageBox, QProgressDialog, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget
+from PyQt6.QtCore import QMetaObject, Qt, Q_ARG, pyqtSlot
+from PyQt6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QMenu, QMessageBox, QProgressDialog, QStackedWidget, QStatusBar, QSystemTrayIcon, QVBoxLayout, QWidget
 
-from config import ASSETS_DIR, ICONS_DIR
+from config import ASSETS_DIR
 from core.audio_engine import BGMPlayer, audio_engine
 from core.backup_manager import BackupManager
 from core.hotkey_manager import hotkey_manager
@@ -30,29 +30,29 @@ class MainWindow(QMainWindow):
         self._quitting = False
         self.setMinimumSize(900, 560)
         self.resize(1200, 700)
-        app_icon = ICONS_DIR / "app.svg"
+        app_icon = ASSETS_DIR / "icon.png"
         if app_icon.exists():
             self.setWindowIcon(QIcon(str(app_icon)))
 
-        root = QFrame(self)
-        root.setObjectName("AppFrame")
-        self.setCentralWidget(root)
-        root_layout = QVBoxLayout(root)
+        central_widget = QFrame(self)
+        central_widget.setObjectName("AppFrame")
+        self.setCentralWidget(central_widget)
+        root_layout = QVBoxLayout(central_widget)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        body = QWidget(root)
-        body_layout = QHBoxLayout(body)
+        body_widget = QWidget(central_widget)
+        body_layout = QHBoxLayout(body_widget)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
 
-        self.sidebar = Sidebar(body)
+        self.sidebar = Sidebar(body_widget)
         self.sidebar.page_selected.connect(self._select_page)
         body_layout.addWidget(self.sidebar)
 
-        self.stack = QStackedWidget(body)
+        self.stack = QStackedWidget(body_widget)
         body_layout.addWidget(self.stack, 1)
-        root_layout.addWidget(body, 1)
+        root_layout.addWidget(body_widget, stretch=1)
 
         self.sounds_page = SoundsPage(self)
         self.bgm_page = BgmPage(self)
@@ -66,19 +66,38 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.help_page)
         self._backup_manager = BackupManager()
 
-        self.bottom_bar = BottomBar(root)
-        root_layout.addWidget(self.bottom_bar)
+        self._bottom_bar = BottomBar(central_widget)
+        self.bottom_bar = self._bottom_bar
+
+        status_bar = QStatusBar(self)
+        status_bar.setFixedHeight(48)
+        status_bar.setSizeGripEnabled(False)
+        status_bar.setStyleSheet(
+            """
+            QStatusBar {
+                border: none;
+                padding: 0;
+                margin: 0;
+                background: #1a1a2e;
+            }
+            QStatusBar::item {
+                border: none;
+            }
+            """
+        )
+        status_bar.addPermanentWidget(self._bottom_bar, 1)
+        self.setStatusBar(status_bar)
 
         self.floating_window = FloatingWindow()
         self._current_bgm_id: str | None = None
         hotkey_manager.set_parent(self)
+        hotkey_manager.start()
         self._connect_signals()
         self._load_from_config()
         self._refresh_devices()
         self._refresh_hotkeys()
         db.sounds_changed.connect(self._refresh_hotkeys)
         self._retranslate_ui()
-        self.statusBar().showMessage(t("status.ready"))
         self._init_tray()
         self.setWindowTitle(t("app.title"))
 
@@ -147,18 +166,15 @@ class MainWindow(QMainWindow):
         config = db.config()
         sounds = db.all_sounds()
         sound_entries = [
-            (sound.id, sound.hotkey, lambda current=sound: self._play_sound(current.id))
+            (sound.id, sound.hotkey, self._make_sound_hotkey_callback(sound.id, sound.hotkey))
             for sound in sounds
             if sound.hotkey and sound.enabled
         ]
-        function_entries = []
-        stop_all_hotkey = str(dict(config.get("hotkeys", {})).get("stop_all", ""))
-        if stop_all_hotkey:
-            function_entries.append(("stop_all", stop_all_hotkey, audio_engine.stop_all))
+        function_entries = self._functional_hotkey_entries(config)
         for bgm in db.all_bgms():
             if bgm.hotkey and bgm.enabled:
                 function_entries.append(
-                    (f"bgm_{bgm.id}", bgm.hotkey, lambda current=bgm: self._play_bgm(current.id))
+                    (f"bgm_{bgm.id}", bgm.hotkey, self._make_bgm_hotkey_callback(bgm.id))
                 )
         hotkey_manager.load_all(
             sound_entries,
@@ -168,8 +184,83 @@ class MainWindow(QMainWindow):
         )
         self._on_hotkey_mode_changed(hotkey_manager.mode if hotkey_manager.enabled else "disabled")
         self.floating_window.set_switch_hotkey_text(
-            str(dict(config.get("hotkeys", {})).get("toggle_hotkey_mode", ""))
+            str(dict(config.get("hotkeys", {})).get("stop_all_music", ""))
         )
+
+    def _make_sound_hotkey_callback(self, sound_id: str, hotkey: str):
+        def _callback() -> None:
+            print(f"[HOTKEY] Triggered: {hotkey} -> sound_id={sound_id}", flush=True)
+            QMetaObject.invokeMethod(
+                self,
+                "_invoke_sound_hotkey",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, sound_id),
+            )
+
+        return _callback
+
+    def _make_bgm_hotkey_callback(self, bgm_id: str):
+        def _callback() -> None:
+            QMetaObject.invokeMethod(
+                self,
+                "_invoke_bgm_hotkey",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, bgm_id),
+            )
+
+        return _callback
+
+    def _functional_hotkey_entries(self, config: dict[str, object]) -> list[tuple[str, str, object]]:
+        hotkeys = dict(config.get("hotkeys", {}))
+
+        mapping = {
+            "stop_all": lambda: self._queue_functional_hotkey("stop_all"),
+            "stop_all_music": lambda: self._queue_functional_hotkey("stop_all_music"),
+            "bgm_play_pause": lambda: self._queue_functional_hotkey("bgm_play_pause"),
+            "bgm_vol_up": lambda: self._queue_functional_hotkey("bgm_vol_up"),
+            "bgm_vol_down": lambda: self._queue_functional_hotkey("bgm_vol_down"),
+            "toggle_window": lambda: self._queue_functional_hotkey("toggle_window"),
+            "minimize_window": lambda: self._queue_functional_hotkey("minimize_window"),
+            "toggle_floating": lambda: self._queue_functional_hotkey("toggle_floating"),
+        }
+        entries: list[tuple[str, str, object]] = []
+        for action_key, callback in mapping.items():
+            combo = str(hotkeys.get(action_key, ""))
+            if combo:
+                entries.append((action_key, combo, callback))
+        return entries
+
+    def _queue_functional_hotkey(self, action_key: str) -> None:
+        QMetaObject.invokeMethod(
+            self,
+            "_invoke_functional_hotkey",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, action_key),
+        )
+
+    @pyqtSlot(str)
+    def _invoke_sound_hotkey(self, sound_id: str) -> None:
+        self._play_sound(sound_id)
+
+    @pyqtSlot(str)
+    def _invoke_bgm_hotkey(self, bgm_id: str) -> None:
+        self._handle_bgm_hotkey(bgm_id)
+
+    @pyqtSlot(str)
+    def _invoke_functional_hotkey(self, action_key: str) -> None:
+        actions = {
+            "stop_all": audio_engine.stop_all,
+            "stop_all_music": self._stop_all_music,
+            "bgm_play_pause": self._toggle_bgm_play_pause,
+            "bgm_vol_up": lambda: self._adjust_bgm_volume(+5),
+            "bgm_vol_down": lambda: self._adjust_bgm_volume(-5),
+            "toggle_window": self._toggle_window_visibility,
+            "minimize_window": self._toggle_window_visibility,
+            "toggle_floating": self._toggle_floating,
+        }
+        callback = actions.get(action_key)
+        if callback is not None:
+            callback()
 
     def _play_sound(self, sound_id: str) -> None:
         sound = db.get_sound(sound_id)
@@ -184,6 +275,45 @@ class MainWindow(QMainWindow):
         self._current_bgm_id = bgm.id
         self.bottom_bar.set_current_bgm(bgm)
         self.bottom_bar.set_bgm_state(playing=True, paused=False)
+
+    def _handle_bgm_hotkey(self, bgm_id: str) -> None:
+        player = BGMPlayer.instance()
+        if self._current_bgm_id == bgm_id:
+            if player.is_playing:
+                print(f"[BGM_HOTKEY] pause current bgm_id={bgm_id}", flush=True)
+                player.pause()
+                self.bottom_bar.set_bgm_state(playing=True, paused=True)
+                return
+            if player.is_paused:
+                print(f"[BGM_HOTKEY] resume current bgm_id={bgm_id}", flush=True)
+                player.resume()
+                self.bottom_bar.set_bgm_state(playing=True, paused=False)
+                return
+        print(f"[BGM_HOTKEY] play bgm_id={bgm_id}", flush=True)
+        self._play_bgm(bgm_id)
+
+    def _toggle_bgm_play_pause(self) -> None:
+        self.bottom_bar._on_play_pause()
+
+    def _adjust_bgm_volume(self, delta: int) -> None:
+        current = self.bottom_bar._vol_slider.value()
+        self.bottom_bar._vol_slider.setValue(max(0, min(100, current + delta)))
+
+    def _stop_all_music(self) -> None:
+        audio_engine.stop_all()
+        BGMPlayer.instance().stop()
+        self._current_bgm_id = None
+        self.bottom_bar.set_bgm_state(playing=False, paused=False)
+        print("[ACTION] Stopped all music (sounds + BGM)", flush=True)
+
+    def _toggle_window_visibility(self) -> None:
+        if self.isHidden():
+            self._restore_window()
+            return
+        if self.isMinimized():
+            self._restore_window()
+            return
+        self.showMinimized()
 
     def _replace_sound(self, sound_id: str) -> None:
         sound = db.get_sound(sound_id)
@@ -257,14 +387,10 @@ class MainWindow(QMainWindow):
         audio_engine.set_output_device(device)
 
     def _set_hotkeys_enabled(self, enabled: bool) -> None:
-        mode = "global" if enabled else "local"
-        db.update_config({"hotkey_mode": mode})
-        hotkey_manager.switch_mode(mode)
-        self._on_hotkey_mode_changed(mode)
+        hotkey_manager.set_enabled(enabled)
+        self._on_hotkey_mode_changed(hotkey_manager.mode if enabled else "disabled")
 
     def _on_hotkey_mode_changed(self, mode: str) -> None:
-        self.bottom_bar.set_hotkeys_enabled(mode == "global")
-        self.floating_window.set_hotkeys_enabled(mode == "global")
         self.floating_window.set_mode_label(mode)
 
     def _show_status_warning(self, message: str) -> None:
@@ -309,7 +435,6 @@ class MainWindow(QMainWindow):
             self._tray_action_floating.setText(t("tray.hide_floating"))
             self._tray_action_quit.setText(t("tray.quit"))
             self._tray.setToolTip(t("app.title"))
-        self.statusBar().showMessage(t("status.ready"))
 
     def refresh_all(self) -> None:
         self.sounds_page.refresh()
@@ -318,8 +443,8 @@ class MainWindow(QMainWindow):
         self._refresh_hotkeys()
 
     def _do_import_backup(self, zip_path: str, mode: str) -> None:
-        progress = QProgressDialog("正在导入备份...", None, 0, 100, self)
-        progress.setWindowTitle("导入中")
+        progress = QProgressDialog(t("backup.import_progress"), None, 0, 100, self)
+        progress.setWindowTitle(t("common.importing"))
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setCancelButton(None)
         progress.setMinimumDuration(0)
@@ -337,15 +462,36 @@ class MainWindow(QMainWindow):
         if ok:
             db.load()
             self.refresh_all()
-            QMessageBox.information(self, "导入成功", "备份已成功导入。")
+            QMessageBox.information(self, t("backup.import_success_title"), t("backup.import_done"))
             return
-        QMessageBox.critical(self, "导入失败", f"错误：{message}")
+        QMessageBox.critical(self, t("backup.import_fail_title"), t("common.error_message", message=message))
+
+    def _do_export_backup(self, zip_path: str) -> None:
+        progress = QProgressDialog(t("backup.export_progress"), None, 0, 100, self)
+        progress.setWindowTitle(t("common.exporting"))
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        def on_progress(current: int, total: int) -> None:
+            pct = int(current / total * 100) if total > 0 else 0
+            progress.setValue(pct)
+            QApplication.processEvents()
+
+        ok, message = self._backup_manager.export_backup(zip_path, progress_cb=on_progress)
+        progress.setValue(100)
+        progress.close()
+
+        if ok:
+            QMessageBox.information(self, t("backup.export_success_title"), t("backup.export_done"))
+            return
+        QMessageBox.critical(self, t("backup.export_fail_title"), t("common.error_message", message=message))
 
     def _retranslate_ui(self, *_args) -> None:
         self.setWindowTitle(t("app.title"))
 
     def _init_tray(self) -> None:
-        icon_file = ASSETS_DIR / "icons" / "app.png"
+        icon_file = ASSETS_DIR / "icon.png"
         icon = QIcon(str(icon_file)) if icon_file.exists() else QIcon()
 
         self._tray = QSystemTrayIcon(icon, self)
@@ -394,6 +540,7 @@ class MainWindow(QMainWindow):
             pass
         try:
             hotkey_manager.unregister_all()
+            hotkey_manager.stop()
         except Exception:
             pass
         self._tray.hide()
@@ -402,6 +549,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._quitting:
             hotkey_manager.unregister_all()
+            hotkey_manager.stop()
             BGMPlayer.instance().stop()
             audio_engine.cleanup()
             self.floating_window.close()

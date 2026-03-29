@@ -12,22 +12,18 @@ from config import DATA_DIR
 class BackupManager:
     """Stateless backup manager."""
 
-    def export_backup(self, dest_path: str) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_p = Path(tmp)
-            for fname in ("config.json", "sounds_db.json", "bgm_db.json"):
-                src = DATA_DIR / fname
-                if src.exists():
-                    shutil.copy(src, tmp_p / fname)
-
-            lib_src = DATA_DIR / "library"
-            if lib_src.exists():
-                shutil.copytree(lib_src, tmp_p / "library")
-
+    def export_backup(self, dest_path: str, progress_cb=None) -> tuple[bool, str]:
+        try:
+            files_to_pack = self._collect_backup_files()
+            total = len(files_to_pack)
             with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for path in tmp_p.rglob("*"):
-                    if path.is_file():
-                        zf.write(path, path.relative_to(tmp_p))
+                for index, (arcname, filepath) in enumerate(files_to_pack):
+                    zf.write(filepath, arcname)
+                    if progress_cb is not None:
+                        progress_cb(index + 1, total)
+            return True, "ok"
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
 
     def validate_backup(self, zip_path: str) -> bool:
         try:
@@ -61,6 +57,21 @@ class BackupManager:
             return True, "ok"
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
+
+    def _collect_backup_files(self) -> list[tuple[str, Path]]:
+        files_to_pack: list[tuple[str, Path]] = []
+        for fname in ("config.json", "sounds_db.json", "bgm_db.json"):
+            src = DATA_DIR / fname
+            if src.exists():
+                files_to_pack.append((fname, src))
+
+        lib_src = DATA_DIR / "library"
+        if lib_src.exists():
+            for path in sorted(lib_src.rglob("*")):
+                if path.is_file():
+                    files_to_pack.append((str(path.relative_to(DATA_DIR)), path))
+
+        return files_to_pack
 
     def _overwrite_from(self, tmp_p: Path) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)

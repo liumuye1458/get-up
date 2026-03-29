@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QHBoxLayout,
+    QMessageBox,
+    QProgressDialog,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from config import LIBRARY_DIR, PRESET_COLORS, SUPPORTED_AUDIO_FORMATS
 from core.i18n_manager import I18nManager, t
@@ -13,6 +23,8 @@ from ui.widgets.search_bar import SearchBar
 from ui.widgets.sound_card_grid import SoundCardGrid
 from ui.widgets.tag_bar import TagBar
 from utils.audio_utils import import_audio_file
+
+FILE_DIALOG_AUDIO_FILTER = "Audio Files (*.mp3 *.wav *.ogg *.flac *.wma *.aac *.aiff *.opus);;All Files (*)"
 
 
 class SoundsPage(QWidget):
@@ -36,20 +48,26 @@ class SoundsPage(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        self.import_button = QPushButton(self)
-        self.import_button.clicked.connect(self.import_sounds)
-        layout.addWidget(self.import_button, 0)
-
         self.search_bar = SearchBar(self)
         self.search_bar.query_changed.connect(self._set_query)
-        layout.addWidget(self.search_bar)
+
+        self.import_button = QPushButton(self)
+        self.import_button.setFixedWidth(120)
+        self.import_button.setFixedHeight(36)
+        self.import_button.clicked.connect(self.import_sounds)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(12)
+        top_row.addWidget(self.search_bar, 1)
+        top_row.addWidget(self.import_button, 0)
+        layout.addLayout(top_row)
 
         self.tag_bar = TagBar(self)
         self.tag_bar.tag_selected.connect(self._set_tag)
         self.tag_bar.create_requested.connect(self._create_tag)
         self.tag_bar.rename_requested.connect(self._rename_tag)
         self.tag_bar.delete_requested.connect(self._delete_tag)
-        self.tag_bar.move_requested.connect(self._move_tag)
         layout.addWidget(self.tag_bar)
 
         self.grid = SoundCardGrid(self)
@@ -100,42 +118,75 @@ class SoundsPage(QWidget):
     def refresh(self) -> None:
         self.reload()
 
-    def import_sounds(self) -> None:
-        exts = " ".join(SUPPORTED_AUDIO_FORMATS)
-        filter_str = f"音频文件 ({exts})"
-        files, _ = QFileDialog.getOpenFileNames(self, "选择音频文件", "", filter_str)
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            t("common.select_audio_files"),
+            "",
+            FILE_DIALOG_AUDIO_FILTER,
+        )
         self._import_files(files)
 
-    def _import_files(self, files: list[str]) -> None:
-        if not files:
-            return
+    def import_sounds(self) -> None:
+        self.refresh()
 
-        imported: list[SoundEffect] = []
+    def _import_files(self, files: list[str]) -> list[str]:
+        if not files:
+            return []
+
+        current_tag_id = self.tag_bar.current_tag_id
+        assign_tag_id = None if current_tag_id in (None, 0, "all") else str(current_tag_id)
+
+        progress = QProgressDialog(t("sounds.import_progress"), t("common.cancel"), 0, len(files), self)
+        progress.setWindowTitle(t("common.importing"))
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        imported_ids: list[str] = []
         failed = 0
-        for file_path in files:
+        for index, file_path in enumerate(files):
+            if progress.wasCanceled():
+                break
+
+            progress.setLabelText(
+                t("sounds.import_progress_item", current=index + 1, total=len(files), name=os.path.basename(file_path))
+            )
+            progress.setValue(index)
+            QApplication.processEvents()
+
             try:
-                source = Path(file_path)
-                stored = import_audio_file(source, LIBRARY_DIR)
-                sound = SoundEffect.create(
-                    name=source.stem,
-                    original_filename=source.name,
-                    library_path=str(stored),
-                    color=PRESET_COLORS[(db.count() + len(imported)) % len(PRESET_COLORS)],
-                    sort_order=db.next_sound_sort_order() + len(imported),
-                )
-                imported.append(sound)
+                sound = self._import_single_file(file_path, offset=len(imported_ids))
+                if assign_tag_id is not None:
+                    db.set_sound_tags(sound.id, [assign_tag_id])
+                imported_ids.append(sound.id)
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 self.status_message.emit(f"{t('sounds.import.failed', name=Path(file_path).name)} ({exc})")
 
-        if imported:
-            db.add_sounds(imported)
+        progress.setValue(len(files))
+        progress.close()
+
         if failed:
             QMessageBox.warning(
                 self,
                 t("app.title"),
-                t("sounds.import.partial", success=len(imported), failed=failed),
+                t("sounds.import.partial", success=len(imported_ids), failed=failed),
             )
+        self.reload()
+        return imported_ids
+
+    def _import_single_file(self, file_path: str, *, offset: int = 0) -> SoundEffect:
+        source = Path(file_path)
+        stored = import_audio_file(source, LIBRARY_DIR)
+        sound = SoundEffect.create(
+            name=source.stem,
+            original_filename=source.name,
+            library_path=str(stored),
+            color=PRESET_COLORS[(db.count() + offset) % len(PRESET_COLORS)],
+            sort_order=db.next_sound_sort_order() + offset,
+        )
+        db.add_sounds([sound])
+        return sound
 
     def dragEnterEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         if event.mimeData().hasUrls():
@@ -166,6 +217,7 @@ class SoundsPage(QWidget):
         unique_files = sorted({item.resolve() for item in audio_files})
         if unique_files:
             self._import_files([str(path) for path in unique_files])
+            self.reload()
         event.acceptProposedAction()
 
     def _set_query(self, query: str) -> None:
@@ -201,7 +253,7 @@ class SoundsPage(QWidget):
         confirmed = QMessageBox.question(
             self,
             t("app.title"),
-            f"删除标签“{tag.name}”？",
+            t("tags.delete_confirm", name=tag.name),
         )
         if confirmed != QMessageBox.StandardButton.Yes:
             return
@@ -209,10 +261,6 @@ class SoundsPage(QWidget):
         if self._current_tag == tag_id:
             self._current_tag = "all"
         self.reload()
-
-    def _move_tag(self, source_id: str, target_id: str) -> None:
-        if db.move_tag_before(source_id, target_id):
-            self.reload()
 
     def _toggle_sound_tag(self, sound_id: str, tag_id: str) -> None:
         if db.toggle_sound_tag(sound_id, tag_id):

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDrag, QMouseEvent, QPainter, QPainterPath
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget
+from PyQt6.QtCore import QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QMouseEvent, QPainter, QPainterPath
+from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget
 
 from config import CARD_HEIGHT, CARD_WIDTH
 from core.i18n_manager import t
 from models.db import db
 from models.sound_effect import SoundEffect
 from models.tag import Tag
+from ui.widgets.tag_bar import TagButton
 
 
 class StatusDot(QWidget):
@@ -58,14 +59,16 @@ class SoundCard(QFrame):
         self.current_tag = current_tag
         self.drag_enabled = drag_enabled
         self._press_pos = QPoint()
+        self._drag_offset = QPoint()
         self._drag_started = False
         self._drop_active = False
+        self._ghost: QLabel | None = None
+        self._hovered_tag: TagButton | None = None
 
         self.setObjectName("SoundCard")
         self.setFixedSize(QSize(CARD_WIDTH, CARD_HEIGHT))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setAcceptDrops(True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -120,6 +123,7 @@ class SoundCard(QFrame):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_pos = event.position().toPoint()
+            self._drag_offset = self._press_pos
             self._drag_started = False
         elif event.button() == Qt.MouseButton.RightButton:
             self._open_menu(event.globalPosition().toPoint())
@@ -130,42 +134,99 @@ class SoundCard(QFrame):
             return super().mouseMoveEvent(event)
         if (event.position().toPoint() - self._press_pos).manhattanLength() < 8:
             return super().mouseMoveEvent(event)
+        if not self._drag_started:
+            self._start_ghost_drag()
         self._drag_started = True
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData("application/x-soundboard-sound", self.sound.id.encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.setPixmap(self.grab())
-        drag.exec(Qt.DropAction.MoveAction)
+        self._update_ghost_drag(event.globalPosition().toPoint())
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._drag_started:
+            global_pos = event.globalPosition().toPoint()
+            target_tag = self._find_tag_button(global_pos)
+            if target_tag is not None:
+                tag_id = target_tag.tag_id
+                db.set_sound_tags(self.sound.id, [] if tag_id == "all" else [tag_id])
+                print(f"[DROP_ON_TAG] sound={self.sound.id} tag={tag_id}", flush=True)
+                self._end_ghost_drag()
+                event.accept()
+                return
+
+            target_card = self._find_sound_card(global_pos)
+            if (
+                target_card is not None
+                and target_card is not self
+                and target_card.sound.id != self.sound.id
+            ):
+                self.move_requested.emit(self.sound.id, target_card.sound.id)
+                self._end_ghost_drag()
+                event.accept()
+                return
+
+            self._end_ghost_drag()
+            event.accept()
+            return
+
         if (
             event.button() == Qt.MouseButton.LeftButton
-            and not self._drag_started
             and self.sound.enabled
         ):
             self.play_requested.emit(self.sound.id)
-        self._drag_started = False
         super().mouseReleaseEvent(event)
 
-    def dragEnterEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if self.drag_enabled and event.mimeData().hasFormat("application/x-soundboard-sound"):
-            self._drop_active = True
-            self.refresh()
-            event.acceptProposedAction()
+    def _start_ghost_drag(self) -> None:
+        self._ghost = QLabel(None)
+        self._ghost.setWindowFlags(
+            Qt.WindowType.ToolTip
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self._ghost.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._ghost.setPixmap(self.grab())
+        self._ghost.setWindowOpacity(0.75)
+        self._ghost.resize(self.size())
+        self._ghost.show()
+        print(f"[DRAG] 开始拖拽 sound_id={self.sound.id}", flush=True)
 
-    def dragLeaveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._drop_active = False
-        self.refresh()
-        super().dragLeaveEvent(event)
+    def _update_ghost_drag(self, global_pos: QPoint) -> None:
+        if self._ghost is not None:
+            self._ghost.move(global_pos - self._drag_offset)
+        self._update_hovered_tag(global_pos)
 
-    def dropEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        self._drop_active = False
-        self.refresh()
-        source_id = bytes(event.mimeData().data("application/x-soundboard-sound")).decode("utf-8")
-        if self.drag_enabled and source_id and source_id != self.sound.id:
-            self.move_requested.emit(source_id, self.sound.id)
-            event.acceptProposedAction()
+    def _end_ghost_drag(self) -> None:
+        if self._hovered_tag is not None:
+            self._hovered_tag.set_highlighted(False)
+            self._hovered_tag = None
+        if self._ghost is not None:
+            self._ghost.hide()
+            self._ghost.deleteLater()
+            self._ghost = None
+        self._drag_started = False
+
+    def _update_hovered_tag(self, global_pos: QPoint) -> None:
+        new_hovered = self._find_tag_button(global_pos)
+        if new_hovered is self._hovered_tag:
+            return
+        if self._hovered_tag is not None:
+            self._hovered_tag.set_highlighted(False)
+        self._hovered_tag = new_hovered
+        if self._hovered_tag is not None:
+            self._hovered_tag.set_highlighted(True)
+
+    def _find_tag_button(self, global_pos: QPoint) -> TagButton | None:
+        widget = QApplication.widgetAt(global_pos)
+        while widget is not None:
+            if isinstance(widget, TagButton):
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    def _find_sound_card(self, global_pos: QPoint) -> "SoundCard" | None:
+        widget = QApplication.widgetAt(global_pos)
+        while widget is not None:
+            if isinstance(widget, SoundCard):
+                return widget
+            widget = widget.parentWidget()
+        return None
 
     def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         super().paintEvent(event)
@@ -203,7 +264,7 @@ class SoundCard(QFrame):
         menu.addAction(duplicate_action)
 
         if self.tags:
-            tags_menu = menu.addMenu("添加到标签")
+            tags_menu = menu.addMenu(t("tags.menu.add"))
             for tag in self.tags:
                 action = QAction(tag.name, tags_menu)
                 action.setCheckable(True)
@@ -214,7 +275,7 @@ class SoundCard(QFrame):
                 tags_menu.addAction(action)
 
         if self.current_tag != "all" and self.current_tag in self.sound.tags:
-            remove_tag_action = QAction("从此标签移除", menu)
+            remove_tag_action = QAction(t("tags.menu.remove_current"), menu)
             remove_tag_action.triggered.connect(
                 lambda: self.remove_current_tag_requested.emit(self.sound.id, self.current_tag)
             )

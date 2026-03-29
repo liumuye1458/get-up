@@ -117,12 +117,12 @@ DEFAULT_CONFIG = {
     },
     "hotkeys": {
         "stop_all": "ctrl+shift+s",
+        "stop_all_music": "",
         "bgm_play_pause": "ctrl+shift+p",
         "bgm_vol_up": "",
         "bgm_vol_down": "",
         "bgm_volume_up": "ctrl+shift+up",
         "bgm_volume_down": "ctrl+shift+down",
-        "toggle_hotkey_mode": "",
         "toggle_window": "ctrl+shift+m",
         "minimize_window": "ctrl+shift+m",
         "toggle_floating": "",

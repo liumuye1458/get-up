@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from uuid import uuid4
 
-from config import VOLUME_DEFAULT_BGM
+from config import PRESET_COLORS, VOLUME_DEFAULT_BGM
 
 
 @dataclass(slots=True)
@@ -12,6 +12,7 @@ class BackgroundMusic:
     name: str
     original_filename: str
     library_path: str
+    color: str = PRESET_COLORS[0]
     hotkey: str = ""
     enabled: bool = True
     loop: bool = True
@@ -37,6 +38,7 @@ class BackgroundMusic:
             name=name[:50],
             original_filename=original_filename,
             library_path=library_path,
+            color=PRESET_COLORS[0],
             sort_order=sort_order,
         )
 
@@ -47,6 +49,7 @@ class BackgroundMusic:
             name=str(payload.get("name") or ""),
             original_filename=str(payload.get("original_filename") or ""),
             library_path=str(payload.get("library_path") or ""),
+            color=str(payload.get("color") or PRESET_COLORS[0]),
             hotkey=str(payload.get("hotkey") or ""),
             enabled=bool(payload.get("enabled", True)),
             loop=bool(payload.get("loop", True)),

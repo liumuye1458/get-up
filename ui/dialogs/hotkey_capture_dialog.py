@@ -4,6 +4,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
+from core.i18n_manager import t
+
 
 class HotkeyCaptureDialog(QDialog):
     def __init__(self, current_hotkey: str = "", parent=None) -> None:
@@ -11,19 +13,21 @@ class HotkeyCaptureDialog(QDialog):
         self._hotkey = current_hotkey
         self.setModal(True)
         self.setFixedSize(360, 180)
-        self.setWindowTitle("录制快捷键")
+        self.setWindowTitle(t("hotkey_capture.title"))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        self.value_label = QLabel(current_hotkey or "未设置", self)
+        self.value_label = QLabel(current_hotkey or t("settings.hotkey_unset"), self)
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.value_label.setStyleSheet("font-size: 24px; font-weight: 700;")
-        self.hint_label = QLabel("按 ESC 或空白键取消录制", self)
+
+        self.hint_label = QLabel(t("hotkey_capture.hint"), self)
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint_label.setStyleSheet("color: #7f8aa3;")
-        self.cancel_button = QPushButton("取消", self)
+
+        self.cancel_button = QPushButton(t("common.cancel"), self)
         self.cancel_button.clicked.connect(self.reject)
 
         layout.addStretch(1)

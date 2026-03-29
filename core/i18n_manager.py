@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from config import I18N_DIR
+from config import APP_ROOT, I18N_DIR, RESOURCE_ROOT
 
 
 class I18nManager(QObject):
@@ -24,13 +26,44 @@ class I18nManager(QObject):
         return cls._instance
 
     def _load(self, lang: str) -> None:
-        path = I18N_DIR / f"{lang}.json"
-        if not path.exists():
-            path = I18N_DIR / "zh.json"
-            lang = "zh"
-        self._data = json.loads(path.read_text(encoding="utf-8"))
-        self._lang = lang
+        resolved = self._resolve_lang(lang)
+        if resolved is None:
+            raise FileNotFoundError(f"i18n file not found for language: {lang}")
+        path, resolved_lang = resolved
+        self._data = json.loads(path.read_text(encoding="utf-8-sig"))
+        self._lang = resolved_lang
         self.language_changed.emit()
+
+    def _candidate_dirs(self) -> list[Path]:
+        candidates = [I18N_DIR, RESOURCE_ROOT / "i18n", APP_ROOT / "_internal" / "i18n"]
+        if getattr(sys, "frozen", False):
+            exe_parent = Path(sys.executable).resolve().parent
+            candidates.append(exe_parent / "_internal" / "i18n")
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                candidates.append(Path(meipass) / "i18n")
+        candidates.append(Path(__file__).resolve().parent.parent / "i18n")
+
+        unique: list[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key not in seen:
+                seen.add(key)
+                unique.append(candidate)
+        return unique
+
+    def _resolve_lang(self, lang: str) -> tuple[Path, str] | None:
+        for base in self._candidate_dirs():
+            path = base / f"{lang}.json"
+            if path.exists():
+                return path, lang
+        if lang != "zh":
+            for base in self._candidate_dirs():
+                fallback = base / "zh.json"
+                if fallback.exists():
+                    return fallback, "zh"
+        return None
 
     def _translate(self, key: str, **kwargs: object) -> str:
         text = self._data.get(key, key)

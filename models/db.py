@@ -38,6 +38,12 @@ class Database(QObject):
     def load(self) -> None:
         self.ensure_storage()
         self._config = self._merge_dicts(DEFAULT_CONFIG, self._read_json(CONFIG_PATH, {}))
+        hotkeys = dict(self._config.get("hotkeys", {}))
+        legacy_stop_all_music = str(hotkeys.get("toggle_hotkey_mode", "") or "")
+        if legacy_stop_all_music and not str(hotkeys.get("stop_all_music", "") or ""):
+            hotkeys["stop_all_music"] = legacy_stop_all_music
+        hotkeys.pop("toggle_hotkey_mode", None)
+        self._config["hotkeys"] = hotkeys
         sounds_payload = self._read_json(SOUNDS_DB_PATH, {"sounds": [], "tags": []})
         self._sounds = [
             SoundEffect.from_dict(item) for item in sounds_payload.get("sounds", [])
@@ -218,6 +224,16 @@ class Database(QObject):
         if sound is None or tag_id not in sound.tags:
             return False
         sound.tags = [item for item in sound.tags if item != tag_id]
+        self.save_sounds(emit_tag_changed=True)
+        return True
+
+    def set_sound_tags(self, sound_id: str, tag_ids: list[str]) -> bool:
+        print(f"[DB] set_sound_tags sound_id={sound_id} tags={tag_ids}", flush=True)
+        sound = self.get_sound(sound_id)
+        if sound is None:
+            return False
+        valid_tags = {tag.id for tag in self._tags}
+        sound.tags = [tag_id for tag_id in tag_ids if tag_id in valid_tags]
         self.save_sounds(emit_tag_changed=True)
         return True
 

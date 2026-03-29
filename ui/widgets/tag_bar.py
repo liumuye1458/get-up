@@ -1,61 +1,48 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QDrag
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QHBoxLayout, QInputDialog, QMenu, QPushButton, QScrollArea, QWidget
 
 from core.i18n_manager import I18nManager, t
 from models.tag import Tag
 
 
-class TagChip(QPushButton):
+class TagButton(QPushButton):
     rename_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
-    move_requested = pyqtSignal(str, str)
 
-    def __init__(self, tag: Tag, parent=None) -> None:
-        super().__init__(tag.name, parent)
-        self.tag = tag
-        self._press_pos = QPoint()
+    def __init__(self, tag_id: str, label: str, *, show_menu: bool, parent=None) -> None:
+        super().__init__(label, parent)
+        self.tag_id = tag_id
+        self._show_menu = show_menu
+        self._base_style = ""
         self.setCheckable(True)
-        self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def mousePressEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._press_pos = event.position().toPoint()
-        super().mousePressEvent(event)
+    def set_base_style(self, style: str) -> None:
+        self._base_style = style
+        self.setStyleSheet(style)
 
-    def mouseMoveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            return super().mouseMoveEvent(event)
-        if (event.position().toPoint() - self._press_pos).manhattanLength() < 8:
-            return super().mouseMoveEvent(event)
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData("application/x-soundboard-tag", self.tag.id.encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.MoveAction)
+    def set_highlighted(self, highlighted: bool) -> None:
+        if highlighted:
+            self.setStyleSheet(
+                f"{self._base_style} QPushButton {{ border: 2px solid #90caf9; border-radius: 14px; }}"
+            )
+        else:
+            self.setStyleSheet(self._base_style)
 
     def contextMenuEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        if not self._show_menu:
+            return
         menu = QMenu(self)
-        rename_action = QAction("重命名", menu)
-        rename_action.triggered.connect(lambda: self.rename_requested.emit(self.tag.id))
-        delete_action = QAction("删除", menu)
-        delete_action.triggered.connect(lambda: self.delete_requested.emit(self.tag.id))
+        rename_action = QAction(t("tags.rename"), menu)
+        rename_action.triggered.connect(lambda: self.rename_requested.emit(self.tag_id))
+        delete_action = QAction(t("tags.delete"), menu)
+        delete_action.triggered.connect(lambda: self.delete_requested.emit(self.tag_id))
         menu.addAction(rename_action)
         menu.addAction(delete_action)
         menu.exec(event.globalPos())
-
-    def dragEnterEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.mimeData().hasFormat("application/x-soundboard-tag"):
-            event.acceptProposedAction()
-
-    def dropEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        source_id = bytes(event.mimeData().data("application/x-soundboard-tag")).decode("utf-8")
-        if source_id and source_id != self.tag.id:
-            self.move_requested.emit(source_id, self.tag.id)
-            event.acceptProposedAction()
 
 
 class TagBar(QScrollArea):
@@ -63,12 +50,11 @@ class TagBar(QScrollArea):
     create_requested = pyqtSignal()
     rename_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
-    move_requested = pyqtSignal(str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._current_tag = "all"
-        self._tag_buttons: dict[str, TagChip] = {}
+        self._tag_buttons: dict[str, TagButton] = {}
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -82,16 +68,18 @@ class TagBar(QScrollArea):
         self._layout.setSpacing(8)
         self.setWidget(container)
 
-        self._all_button = QPushButton(container)
-        self._all_button.setCheckable(True)
+        self._all_button = TagButton("all", "", show_menu=False, parent=container)
         self._all_button.clicked.connect(lambda: self._select("all"))
 
         self._new_button = QPushButton(container)
-        self._new_button.setVisible(True)
         self._new_button.clicked.connect(self.create_requested.emit)
 
         I18nManager.events.language_changed.connect(self._retranslate_ui)
         self._retranslate_ui()
+
+    @property
+    def current_tag_id(self) -> str | int:
+        return 0 if self._current_tag == "all" else self._current_tag
 
     def set_tags(self, tags: list[Tag], current_tag: str) -> None:
         self._current_tag = current_tag
@@ -104,11 +92,10 @@ class TagBar(QScrollArea):
         self._tag_buttons.clear()
         self._layout.addWidget(self._all_button)
         for tag in tags:
-            button = TagChip(tag, self.widget())
+            button = TagButton(tag.id, tag.name, show_menu=True, parent=self.widget())
             button.clicked.connect(lambda checked=False, tag_id=tag.id: self._select(tag_id))
             button.rename_requested.connect(self.rename_requested.emit)
             button.delete_requested.connect(self.delete_requested.emit)
-            button.move_requested.connect(self.move_requested.emit)
             self._tag_buttons[tag.id] = button
             self._layout.addWidget(button)
         self._layout.addWidget(self._new_button)
@@ -123,7 +110,7 @@ class TagBar(QScrollArea):
         return value.strip() or None
 
     def prompt_rename_tag(self, current_name: str) -> str | None:
-        value, accepted = QInputDialog.getText(self, t("app.title"), "重命名标签", text=current_name)
+        value, accepted = QInputDialog.getText(self, t("app.title"), t("tags.rename_prompt"), text=current_name)
         if not accepted:
             return None
         return value.strip() or None
@@ -135,10 +122,10 @@ class TagBar(QScrollArea):
 
     def _apply_selection(self) -> None:
         self._all_button.setChecked(self._current_tag == "all")
-        self._all_button.setStyleSheet(self._style_for(self._current_tag == "all"))
+        self._all_button.set_base_style(self._style_for(self._current_tag == "all"))
         for tag_id, button in self._tag_buttons.items():
             button.setChecked(self._current_tag == tag_id)
-            button.setStyleSheet(self._style_for(self._current_tag == tag_id))
+            button.set_base_style(self._style_for(self._current_tag == tag_id))
 
     def _style_for(self, checked: bool) -> str:
         background = "#1a6b8a" if checked else "#252540"

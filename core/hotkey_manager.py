@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget
-
-import keyboard
+from pynput import keyboard
 
 
 class HotkeyManager(QObject):
@@ -27,9 +25,10 @@ class HotkeyManager(QObject):
         super().__init__()
         self._mode = "global"
         self._enabled = True
+        self._started = False
         self._sound_bindings: dict[str, tuple[str, Callable[[], None]]] = {}
         self._function_bindings: dict[str, tuple[str, Callable[[], None]]] = {}
-        self._keyboard_handles: dict[str, int] = {}
+        self._listener: keyboard.GlobalHotKeys | None = None
         self._shortcuts: list[QShortcut] = []
         self._parent_widget: QWidget | None = None
 
@@ -44,14 +43,19 @@ class HotkeyManager(QObject):
     def set_parent(self, widget: QWidget) -> None:
         self._parent_widget = widget
 
+    def start(self) -> None:
+        self._started = True
+        self.reload_all()
+
+    def stop(self) -> None:
+        self._started = False
+        self.unregister_all()
+
     def set_enabled(self, enabled: bool) -> None:
         if self._enabled == enabled:
             return
         self._enabled = enabled
-        if enabled:
-            self.reload_all()
-        else:
-            self.unregister_all()
+        self.reload_all()
         self.enabled_changed.emit(enabled)
 
     def switch_mode(self, mode: str) -> None:
@@ -62,28 +66,20 @@ class HotkeyManager(QObject):
     def register_sound(self, sound_id: str, hotkey: str, callback: Callable[[], None]) -> None:
         self.unregister_sound(sound_id)
         self._sound_bindings[sound_id] = (hotkey, callback)
-        if not hotkey:
-            return
-        if not self._enabled or self._mode != "global":
-            return
-        self._add_handle(f"sound:{sound_id}", hotkey, callback)
+        self.reload_all()
 
     def unregister_sound(self, sound_id: str) -> None:
         self._sound_bindings.pop(sound_id, None)
-        self._remove_handle(f"sound:{sound_id}")
+        self.reload_all()
 
     def register_function(self, key: str, hotkey: str, callback: Callable[[], None]) -> None:
         self.unregister_function(key)
         self._function_bindings[key] = (hotkey, callback)
-        if not hotkey:
-            return
-        if not self._enabled or self._mode != "global":
-            return
-        self._add_handle(f"fn:{key}", hotkey, callback)
+        self.reload_all()
 
     def unregister_function(self, key: str) -> None:
         self._function_bindings.pop(key, None)
-        self._remove_handle(f"fn:{key}")
+        self.reload_all()
 
     def load_all(
         self,
@@ -101,60 +97,106 @@ class HotkeyManager(QObject):
             if hotkey
         }
         self._function_bindings = {
-            key: (hotkey, callback) for key, hotkey, callback in function_entries if hotkey
+            key: (hotkey, callback)
+            for key, hotkey, callback in function_entries
+            if hotkey
         }
         self.reload_all()
 
     def reload_all(self) -> None:
         self.unregister_all()
-        if not self._enabled:
+        if not self._started or not self._enabled:
+            return
+
+        if self._mode == "global":
+            hotkeys: dict[str, Callable[[], None]] = {}
+            for sound_id, (hotkey, callback) in self._sound_bindings.items():
+                self._add_global_binding(hotkeys, f"sound:{sound_id}", hotkey, callback)
+            for key, (hotkey, callback) in self._function_bindings.items():
+                self._add_global_binding(hotkeys, f"fn:{key}", hotkey, callback)
+            if hotkeys:
+                try:
+                    self._listener = keyboard.GlobalHotKeys(hotkeys)
+                    self._listener.start()
+                    print("[HOTKEY_MGR] Listener started", flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    self.registration_error.emit(str(exc))
             return
 
         for sound_id, (hotkey, callback) in self._sound_bindings.items():
-            if self._mode == "global":
-                self._add_handle(f"sound:{sound_id}", hotkey, callback)
-            else:
-                self._register_local(hotkey, callback)
+            self._register_local(f"sound:{sound_id}", hotkey, callback)
         for key, (hotkey, callback) in self._function_bindings.items():
-            if self._mode == "global":
-                self._add_handle(f"fn:{key}", hotkey, callback)
-            else:
-                self._register_local(hotkey, callback)
+            self._register_local(f"fn:{key}", hotkey, callback)
 
     def unregister_all(self) -> None:
-        for binding_id in list(self._keyboard_handles):
-            self._remove_handle(binding_id)
+        if self._listener is not None:
+            try:
+                self._listener.stop()
+            except Exception:
+                pass
+            self._listener = None
         for shortcut in self._shortcuts:
             shortcut.setParent(None)
         self._shortcuts.clear()
 
-    def _add_handle(self, binding_id: str, hotkey: str, callback: Callable[[], None]) -> None:
-        if not hotkey:
+    def _add_global_binding(
+        self,
+        bucket: dict[str, Callable[[], None]],
+        tag: str,
+        hotkey: str,
+        callback: Callable[[], None],
+    ) -> None:
+        combo = self._to_pynput_combo(hotkey)
+        if not combo:
             return
-        try:
-            self._keyboard_handles[binding_id] = keyboard.add_hotkey(hotkey, callback)
-            logging.warning(f"[HotkeyManager] 已注册全局热键: {hotkey}")
-        except PermissionError:
-            self.permission_warning.emit()
-            self.switch_mode("local")
-        except Exception as exc:  # noqa: BLE001
-            self.registration_error.emit(str(exc))
+        print(f"[HOTKEY] Registered: {hotkey} -> {tag}", flush=True)
+        bucket[combo] = lambda current_hotkey=hotkey, current_callback=callback: self._invoke(
+            current_hotkey,
+            current_callback,
+        )
 
-    def _register_local(self, hotkey: str, callback: Callable[[], None]) -> QShortcut | None:
+    def _register_local(self, tag: str, hotkey: str, callback: Callable[[], None]) -> QShortcut | None:
         if not hotkey or self._parent_widget is None:
             return None
         shortcut = QShortcut(QKeySequence(hotkey), self._parent_widget)
-        shortcut.activated.connect(callback)
+        shortcut.activated.connect(
+            lambda current_hotkey=hotkey, current_callback=callback: self._invoke(
+                current_hotkey,
+                current_callback,
+            )
+        )
         self._shortcuts.append(shortcut)
+        print(f"[HOTKEY] Registered: {hotkey} -> {tag}", flush=True)
         return shortcut
 
-    def _remove_handle(self, binding_id: str) -> None:
-        handle = self._keyboard_handles.pop(binding_id, None)
-        if handle is None:
-            return
+    def _invoke(self, hotkey: str, callback: Callable[[], None]) -> None:
+        print(f"[HOTKEY] Triggered: {hotkey}", flush=True)
         try:
-            keyboard.remove_hotkey(handle)
-        except KeyError:
-            pass
+            callback()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[HOTKEY] Callback error: {exc}", flush=True)
+            self.registration_error.emit(str(exc))
+
+    def _to_pynput_combo(self, hotkey: str) -> str:
+        parts = [part.strip().lower() for part in hotkey.split("+") if part.strip()]
+        converted: list[str] = []
+        for part in parts:
+            if part in {"ctrl", "control", "control_l", "control_r"}:
+                converted.append("<ctrl>")
+            elif part in {"shift", "shift_l", "shift_r"}:
+                converted.append("<shift>")
+            elif part in {"alt", "alt_l", "alt_r", "alt_gr"}:
+                converted.append("<alt>")
+            elif part in {"cmd", "super", "meta", "windows"}:
+                converted.append("<cmd>")
+            elif part in {"enter", "return", "space", "tab", "esc", "escape", "backspace"}:
+                name = "esc" if part in {"esc", "escape"} else part
+                converted.append(f"<{name}>")
+            elif part.startswith("f") and part[1:].isdigit():
+                converted.append(f"<{part}>")
+            else:
+                converted.append(part)
+        return "+".join(converted)
+
 
 hotkey_manager = HotkeyManager.instance()

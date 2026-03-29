@@ -2,47 +2,35 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
-from config import CARD_GAP
-from core.i18n_manager import I18nManager, t
 from models.sound_effect import SoundEffect
 from models.tag import Tag
 from ui.widgets.flow_layout import FlowLayout
 from ui.widgets.sound_card import SoundCard
 
 
-class SoundCardGrid(QScrollArea):
+class SoundCardGrid(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWidgetResizable(True)
-        self.setFrameShape(self.Shape.NoFrame)
-        self.setAcceptDrops(True)
-        self.viewport().setAcceptDrops(True)
         self._cards: list[SoundCard] = []
-        self._on_move: Callable[[str, str], None] | None = None
 
-        self.content = QWidget(self)
-        self.content.setAcceptDrops(True)
-        self.layout_root = QVBoxLayout(self.content)
-        self.layout_root.setContentsMargins(0, 0, 0, 0)
-        self.layout_root.setSpacing(12)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self.empty_label = QLabel(self.content)
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #7f8aa3; padding: 48px 0;")
-        self.layout_root.addWidget(self.empty_label)
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        self.flow_host = QWidget(self.content)
-        self.flow_host.setAcceptDrops(True)
-        self.flow_layout = FlowLayout(self.flow_host, 0, CARD_GAP, CARD_GAP)
-        self.layout_root.addWidget(self.flow_host)
-        self.layout_root.addStretch(1)
-        self.setWidget(self.content)
+        self._content = QWidget(self._scroll)
+        self._flow = FlowLayout(self._content, margin=0, h_spacing=12, v_spacing=12)
+        self._content.setLayout(self._flow)
+        self._scroll.setWidget(self._content)
 
-        I18nManager.events.language_changed.connect(self._retranslate_ui)
-        self._retranslate_ui()
+        root.addWidget(self._scroll)
 
     def set_sounds(
         self,
@@ -63,16 +51,16 @@ class SoundCardGrid(QScrollArea):
         on_remove_current_tag: Callable[[str, str], None],
         on_move: Callable[[str, str], None],
     ) -> None:
-        self._on_move = on_move
-        self.flow_layout.clear()
+        self._flow.clear()
         self._cards.clear()
+
         for sound in sounds:
             card = SoundCard(
                 sound,
                 tags=tags,
                 current_tag=current_tag,
                 drag_enabled=drag_enabled,
-                parent=self.flow_host,
+                parent=self._content,
             )
             card.play_requested.connect(on_play)
             card.replace_requested.connect(on_replace)
@@ -85,52 +73,5 @@ class SoundCardGrid(QScrollArea):
             card.toggle_tag_requested.connect(on_toggle_tag)
             card.remove_current_tag_requested.connect(on_remove_current_tag)
             card.move_requested.connect(on_move)
-            self.flow_layout.addWidget(card)
+            self._flow.addWidget(card)
             self._cards.append(card)
-        self.empty_label.setVisible(not sounds)
-        self.flow_host.setVisible(bool(sounds))
-
-    def dragEnterEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.mimeData().hasFormat("application/x-soundboard-sound"):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.mimeData().hasFormat("application/x-soundboard-sound"):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event) -> None:  # type: ignore[no-untyped-def]
-        if not event.mimeData().hasFormat("application/x-soundboard-sound"):
-            event.ignore()
-            return
-        if self._on_move is None or not self._cards:
-            event.ignore()
-            return
-
-        source_id = bytes(event.mimeData().data("application/x-soundboard-sound")).decode("utf-8")
-        target_id = self._target_sound_id(event.position().toPoint())
-        if not target_id or target_id == source_id:
-            event.ignore()
-            return
-        self._on_move(source_id, target_id)
-        event.acceptProposedAction()
-
-    def _target_sound_id(self, viewport_pos: QPoint) -> str | None:
-        content_pos = self.viewport().mapTo(self.flow_host, viewport_pos)
-        for card in self._cards:
-            if card.geometry().contains(content_pos):
-                return card.sound.id
-
-        nearest: tuple[int, str] | None = None
-        for card in self._cards:
-            center = card.geometry().center()
-            distance = abs(center.x() - content_pos.x()) + abs(center.y() - content_pos.y())
-            if nearest is None or distance < nearest[0]:
-                nearest = (distance, card.sound.id)
-        return nearest[1] if nearest else None
-
-    def _retranslate_ui(self, *_args) -> None:
-        self.empty_label.setText(t("sounds.empty"))

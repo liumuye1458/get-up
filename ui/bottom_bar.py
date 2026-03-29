@@ -1,230 +1,220 @@
+"""
+Bottom control bar without emoji glyphs.
+"""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QWidget
 
 from core.audio_engine import BGMPlayer
-from core.i18n_manager import I18nManager, t
+from core.hotkey_manager import hotkey_manager
+from core.i18n_manager import I18nManager
 from models.bgm import BackgroundMusic
-from ui.widgets.toggle_switch import ToggleSwitch
 from utils.audio_utils import read_audio_duration
+
+
+def _make_icon(text: str, color: str, size: int = 20) -> QIcon:
+    pixmap = QPixmap(QSize(size, size))
+    pixmap.fill(QColor("transparent"))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color)))
+    painter.setFont(QFont("Segoe UI Symbol", max(9, int(size * 0.55)), QFont.Weight.Bold))
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _sep() -> QFrame:
+    frame = QFrame()
+    frame.setFixedSize(1, 22)
+    frame.setStyleSheet("background: #2e2e46;")
+    return frame
 
 
 class BottomBar(QWidget):
     output_device_changed = pyqtSignal(object)
+    device_changed = pyqtSignal(int)
     stop_all_requested = pyqtSignal()
     hotkeys_enabled_changed = pyqtSignal(bool)
+    hotkey_toggled = pyqtSignal(bool)
     bgm_position_changed = pyqtSignal(float, float)
+    play_clicked = pyqtSignal()
+    volume_changed = pyqtSignal(int)
+    loop_toggled = pyqtSignal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._current_bgm: BackgroundMusic | None = None
-        self._loop = True
-
-        self.setObjectName("BottomControlBar")
-        self.setFixedHeight(52)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(12)
-
-        self.output_label = QLabel(self)
-        self.output_label.setStyleSheet("color: #666677;")
-        self.output_combo = QComboBox(self)
-        self.output_combo.setMinimumWidth(220)
-        self.output_combo.currentIndexChanged.connect(self._emit_output_change)
-        layout.addWidget(self.output_label)
-        layout.addWidget(self.output_combo)
-
-        divider = QFrame(self)
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setStyleSheet("color: #333344;")
-        layout.addWidget(divider)
-
-        self.hotkey_toggle = ToggleSwitch(self)
-        self.hotkey_toggle.setChecked(True)
-        self.hotkey_toggle.toggled.connect(self.hotkeys_enabled_changed.emit)
-        self.hotkey_label = QLabel(self)
-
-        self._btn_stop = QPushButton("⏹", self)
-        self._btn_stop.setObjectName("StopAllButton")
-        self._btn_stop.clicked.connect(self.stop_all_requested.emit)
-
-        self._btn_prev = QPushButton("⏮", self)
-        self._btn_prev.setEnabled(False)
-
-        self._btn_play = QPushButton("▶", self)
-        self._btn_play.clicked.connect(self._on_play)
-
-        self._btn_pause = QPushButton("⏸", self)
-        self._btn_pause.clicked.connect(self._on_pause)
-
-        self._btn_next = QPushButton("⏭", self)
-        self._btn_next.setEnabled(False)
-
-        for button, tooltip in [
-            (self._btn_stop, t("bottom.stop_all")),
-            (self._btn_prev, "上一首"),
-            (self._btn_play, "播放"),
-            (self._btn_pause, "暂停"),
-            (self._btn_next, "下一首"),
-        ]:
-            button.setFixedSize(36, 30)
-            button.setToolTip(tooltip)
-
-        self.time_label = QLabel("0:00 / 0:00", self)
-        self.time_label.setStyleSheet("color: #888899;")
-        self.loop_button = QPushButton("Loop", self)
-        self.loop_button.setFixedWidth(42)
-        self.loop_button.clicked.connect(self._on_loop_toggle)
-        self.volume_slider = QSlider(Qt.Orientation.Horizontal, self)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(70)
-        self.volume_slider.setFixedWidth(80)
-        self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        self.vol_label = QLabel("70", self)
-        self.vol_label.setStyleSheet("color: #888899; min-width: 22px;")
-
-        layout.addWidget(self.hotkey_toggle)
-        layout.addWidget(self.hotkey_label)
-        layout.addWidget(self._btn_stop)
-        layout.addWidget(self._btn_prev)
-        layout.addWidget(self._btn_play)
-        layout.addWidget(self._btn_pause)
-        layout.addWidget(self._btn_next)
-        layout.addWidget(self.time_label)
-        layout.addWidget(self.loop_button)
-        layout.addWidget(self.volume_slider)
-        layout.addWidget(self.vol_label)
-        layout.addStretch(1)
-
+        self._is_playing = False
+        self._device_label: QLabel | None = None
+        self._vol_icon: QLabel | None = None
+        self._build_ui()
         self.bgm_position_changed.connect(self._update_time)
         BGMPlayer.instance().position_cb = self._forward_position
-        I18nManager.events.language_changed.connect(self._retranslate_ui)
-        self._set_bgm_controls_enabled(False)
-        self._set_loop_style()
+
+    def _build_ui(self) -> None:
+        self.setFixedHeight(48)
+        self.setStyleSheet(
+            """
+            BottomBar {
+                background: #1a1a2e;
+                border-top: 1px solid #2a2a3e;
+            }
+            """
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 0, 20, 10)
+        layout.setSpacing(0)
+
+        self._device_label = QLabel("输出" if I18nManager.current_language() == "zh" else "Output")
+        self._device_label.setStyleSheet("color: #666; font-size: 12px; border: none;")
+        layout.addWidget(self._device_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(8)
+
+        self._device_combo = QComboBox()
+        self._device_combo.setFixedSize(160, 28)
+        self._device_combo.setStyleSheet(
+            """
+            QComboBox {
+                background: #252540; border: 1px solid #333360;
+                border-radius: 4px; color: #ccc; font-size: 12px;
+                padding: 3px 8px;
+            }
+            QComboBox:hover { border-color: #4a4a80; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background: #252540; color: #ccc;
+                selection-background-color: #1565c0;
+            }
+            """
+        )
+        self._device_combo.currentIndexChanged.connect(self._emit_output_change)
+        layout.addWidget(self._device_combo, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addSpacing(16)
+        layout.addWidget(_sep(), 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(16)
+
+        self._hotkey_btn = QPushButton()
+        self._hotkey_btn.setFixedSize(34, 28)
+        self._hotkey_btn.setCheckable(True)
+        self._hotkey_btn.setChecked(True)
+        self._hotkey_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._update_toggle_btn(self._hotkey_btn, True, "\u2328")
+        self._hotkey_btn.toggled.connect(lambda checked: self._update_toggle_btn(self._hotkey_btn, checked, "\u2328"))
+        self._hotkey_btn.toggled.connect(self._on_hotkey_toggled)
+        layout.addWidget(self._hotkey_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addSpacing(16)
+        layout.addWidget(_sep(), 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(16)
+
+        self._time_label = QLabel("00:00 / 00:00")
+        self._time_label.setStyleSheet("color: #888; font-size: 12px; border: none;")
+        self._time_label.setFixedWidth(96)
+        self._time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._time_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(8)
+
+        self._play_btn = QPushButton()
+        self._play_btn.setFixedSize(36, 28)
+        self._play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._update_play_btn()
+        self._play_btn.clicked.connect(self._on_play_pause)
+        layout.addWidget(self._play_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addSpacing(16)
+        layout.addWidget(_sep(), 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(16)
+
+        self._vol_icon = QLabel()
+        self._vol_icon.setPixmap(_make_icon("\u266A", "#666666", 18).pixmap(18, 18))
+        self._vol_icon.setFixedSize(18, 18)
+        self._vol_icon.setStyleSheet("border: none;")
+        layout.addWidget(self._vol_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(8)
+
+        self._vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self._vol_slider.setRange(0, 100)
+        self._vol_slider.setValue(70)
+        self._vol_slider.setFixedWidth(110)
+        self._vol_slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal {
+                height: 4px; background: #333; border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                width: 12px; height: 12px; margin: -4px 0;
+                background: #1565c0; border-radius: 6px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #1565c0; border-radius: 2px;
+            }
+            """
+        )
+        self._vol_slider.valueChanged.connect(self._update_vol_num)
+        self._vol_slider.valueChanged.connect(self._on_volume_changed)
+        layout.addWidget(self._vol_slider, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(8)
+
+        self._vol_num = QLabel("70")
+        self._vol_num.setStyleSheet("color: #888; font-size: 12px; border: none;")
+        self._vol_num.setFixedWidth(26)
+        self._vol_num.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self._vol_num, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addSpacing(16)
+        layout.addWidget(_sep(), 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addSpacing(16)
+
+        self._loop_btn = QPushButton()
+        self._loop_btn.setFixedSize(34, 28)
+        self._loop_btn.setCheckable(True)
+        self._loop_btn.setChecked(True)
+        self._loop_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._update_toggle_btn(self._loop_btn, True, "\u21BB")
+        self._loop_btn.toggled.connect(lambda checked: self._update_toggle_btn(self._loop_btn, checked, "\u21BB"))
+        self._loop_btn.toggled.connect(self._on_loop_toggled)
+        layout.addWidget(self._loop_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addStretch()
         self._retranslate_ui()
 
-    def set_devices(self, devices: list[dict[str, object]], current_device: str | int) -> None:
-        self.output_combo.blockSignals(True)
-        self.output_combo.clear()
-        self.output_combo.addItem(t("bottom.system_default"), "default")
-        for device in devices:
-            self.output_combo.addItem(str(device["name"]), device["index"])
-        index = self.output_combo.findData(current_device)
-        if index < 0:
-            index = 0
-        self.output_combo.setCurrentIndex(index)
-        self.output_combo.blockSignals(False)
+    def _update_toggle_btn(self, btn: QPushButton, checked: bool, text: str) -> None:
+        bg, fg = ("#1565c0", "#ffffff") if checked else ("#2a2a3a", "#555555")
+        btn.setIcon(_make_icon(text, fg, 20))
+        btn.setIconSize(QSize(20, 20))
+        btn.setText("")
+        btn.setStyleSheet(
+            f"QPushButton {{ background:{bg}; border:none; border-radius:4px; }}"
+            f"QPushButton:hover {{ background:{bg}; border:none; border-radius:4px; }}"
+        )
 
-    def set_hotkeys_enabled(self, enabled: bool) -> None:
-        self.hotkey_toggle.blockSignals(True)
-        self.hotkey_toggle.setChecked(enabled)
-        self.hotkey_toggle.blockSignals(False)
-        self.hotkey_label.setText(t("bottom.hotkey_on") if enabled else t("bottom.hotkey_off"))
-
-    def set_hotkey_mode(self, mode: str) -> None:
-        self.set_hotkeys_enabled(mode == "global")
-
-    def set_current_bgm(self, bgm: BackgroundMusic | None) -> None:
-        self._current_bgm = bgm
-        if bgm is None:
-            self._loop = True
-            self.volume_slider.blockSignals(True)
-            self.volume_slider.setValue(70)
-            self.volume_slider.blockSignals(False)
-            self.vol_label.setText("70")
-            self.time_label.setText("0:00 / 0:00")
-            self._set_loop_style()
-            self._set_bgm_controls_enabled(False)
-            return
-
-        self._loop = bgm.loop
-        self.volume_slider.blockSignals(True)
-        self.volume_slider.setValue(bgm.volume)
-        self.volume_slider.blockSignals(False)
-        self.vol_label.setText(str(bgm.volume))
-        self._update_time(0.0, self._duration_of(bgm))
-        self._set_loop_style()
-        self._sync_transport_buttons()
-        self._set_bgm_controls_enabled(True)
-
-    def set_bgm_state(self, *, playing: bool, paused: bool = False) -> None:
-        if self._current_bgm is None:
-            self._set_bgm_controls_enabled(False)
-            return
-        self._set_bgm_controls_enabled(True)
-        self._sync_transport_buttons(playing=playing, paused=paused)
+    def _update_play_btn(self) -> None:
+        label = "\u23F8" if self._is_playing else "\u25B6"
+        self._play_btn.setIcon(_make_icon(label, "#ffffff", 18))
+        self._play_btn.setIconSize(QSize(18, 18))
+        self._play_btn.setText("")
+        self._play_btn.setStyleSheet(
+            "QPushButton { background:#1565c0; border:none; border-radius:4px; }"
+            "QPushButton:hover { background:#1976d2; border:none; border-radius:4px; }"
+        )
 
     def _emit_output_change(self) -> None:
-        self.output_device_changed.emit(self.output_combo.currentData())
+        self.output_device_changed.emit(self._device_combo.currentData())
+        self.device_changed.emit(self._device_combo.currentIndex())
 
     def _forward_position(self, current: float, total: float) -> None:
         self.bgm_position_changed.emit(current, total)
 
-    def _set_bgm_controls_enabled(self, enabled: bool) -> None:
-        for widget in (
-            self._btn_prev,
-            self._btn_play,
-            self._btn_pause,
-            self._btn_next,
-            self.time_label,
-            self.loop_button,
-            self.volume_slider,
-            self.vol_label,
-        ):
-            widget.setEnabled(enabled)
-        if enabled:
-            self._sync_transport_buttons()
-
-    def _sync_transport_buttons(self, *, playing: bool | None = None, paused: bool | None = None) -> None:
-        player = BGMPlayer.instance()
-        is_playing = player.is_playing if playing is None else playing
-        is_paused = player.is_paused if paused is None else paused
-        has_bgm = self._current_bgm is not None
-        self._btn_prev.setEnabled(False)
-        self._btn_next.setEnabled(False)
-        self._btn_play.setEnabled(has_bgm and (not is_playing or is_paused))
-        self._btn_pause.setEnabled(has_bgm and is_playing)
-
-    def _on_play(self) -> None:
-        if self._current_bgm is None:
-            return
-        player = BGMPlayer.instance()
-        if player.is_paused:
-            player.resume()
-            self._sync_transport_buttons(playing=True, paused=False)
-            return
-        if not player.is_playing:
-            player.play(self._current_bgm.library_path, self.volume_slider.value(), self._loop)
-            self._update_time(0.0, self._duration_of(self._current_bgm))
-            self._sync_transport_buttons(playing=True, paused=False)
-
-    def _on_pause(self) -> None:
-        if self._current_bgm is None:
-            return
-        player = BGMPlayer.instance()
-        if player.is_playing:
-            player.pause()
-            self._sync_transport_buttons(playing=False, paused=True)
-
-    def _on_loop_toggle(self) -> None:
-        self._loop = not self._loop
-        BGMPlayer.instance().set_loop(self._loop)
-        self._set_loop_style()
-
-    def _set_loop_style(self) -> None:
-        self.loop_button.setStyleSheet("color: #4a9eff;" if self._loop else "color: #555566;")
-
-    def _on_volume_changed(self, value: int) -> None:
-        BGMPlayer.instance().set_volume(value)
-        self.vol_label.setText(str(value))
-
     def _update_time(self, current: float, total: float) -> None:
         def fmt(seconds: float) -> str:
-            return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+            return f"{int(seconds // 60):02d}:{int(seconds % 60):02d}"
 
-        self.time_label.setText(f"{fmt(current)} / {fmt(total)}")
+        self._time_label.setText(f"{fmt(current)} / {fmt(total)}")
 
     def _duration_of(self, bgm: BackgroundMusic) -> float:
         try:
@@ -232,11 +222,107 @@ class BottomBar(QWidget):
         except Exception:
             return 0.0
 
-    def _retranslate_ui(self, *_args) -> None:
-        self.output_label.setText(t("bottom.output_device"))
-        self._btn_stop.setToolTip(t("bottom.stop_all"))
-        self._btn_prev.setToolTip("上一首")
-        self._btn_play.setToolTip("播放")
-        self._btn_pause.setToolTip("暂停")
-        self._btn_next.setToolTip("下一首")
-        self.set_hotkeys_enabled(self.hotkey_toggle.isChecked())
+    def _on_hotkey_toggled(self, checked: bool) -> None:
+        hotkey_manager.set_enabled(checked)
+        self.hotkeys_enabled_changed.emit(checked)
+        self.hotkey_toggled.emit(checked)
+
+    def _on_play_pause(self) -> None:
+        if self._current_bgm is None:
+            self._is_playing = not self._is_playing
+            self._update_play_btn()
+            self.play_clicked.emit()
+            return
+
+        player = BGMPlayer.instance()
+        if player.is_playing:
+            player.pause()
+            self.set_playing(False)
+        elif player.is_paused:
+            player.resume()
+            self.set_playing(True)
+        else:
+            player.play(self._current_bgm.library_path, self._vol_slider.value(), self._loop_btn.isChecked())
+            self.set_playing(True)
+        self.play_clicked.emit()
+
+    def _update_vol_num(self, val: int) -> None:
+        self._vol_num.setText(str(val))
+
+    def _on_volume_changed(self, value: int) -> None:
+        BGMPlayer.instance().set_volume(value)
+        self.volume_changed.emit(value)
+
+    def _on_loop_toggled(self, checked: bool) -> None:
+        BGMPlayer.instance().set_loop(checked)
+        self.loop_toggled.emit(checked)
+
+    def set_devices(self, devices: list[dict], current_device: str | int = "default") -> None:
+        self._device_combo.blockSignals(True)
+        self._device_combo.clear()
+        for device in devices:
+            value = "default" if device["index"] == -1 else device["index"]
+            self._device_combo.addItem(device["name"], value)
+        target_device = "default" if current_device in {None, -1, "default"} else current_device
+        index = self._device_combo.findData(target_device)
+        if index < 0:
+            index = 0
+        self._device_combo.setCurrentIndex(index)
+        self._device_combo.blockSignals(False)
+
+    def set_time(self, current: str, total: str) -> None:
+        self._time_label.setText(f"{current} / {total}")
+
+    def set_playing(self, playing: bool) -> None:
+        self._is_playing = playing
+        self._update_play_btn()
+
+    def set_volume(self, val: int) -> None:
+        self._vol_slider.blockSignals(True)
+        self._vol_slider.setValue(val)
+        self._vol_slider.blockSignals(False)
+        self._vol_num.setText(str(val))
+
+    def set_hotkeys_enabled(self, enabled: bool) -> None:
+        self._hotkey_btn.blockSignals(True)
+        self._hotkey_btn.setChecked(enabled)
+        self._hotkey_btn.blockSignals(False)
+        self._update_toggle_btn(self._hotkey_btn, enabled, "\u2328")
+
+    def set_hotkey_mode(self, _mode: str) -> None:
+        return
+
+    def set_current_bgm(self, bgm: BackgroundMusic | None) -> None:
+        self._current_bgm = bgm
+        if bgm is None:
+            self._time_label.setText("00:00 / 00:00")
+            self.set_playing(False)
+            return
+        self.set_volume(bgm.volume)
+        self._loop_btn.blockSignals(True)
+        self._loop_btn.setChecked(bgm.loop)
+        self._loop_btn.blockSignals(False)
+        self._update_toggle_btn(self._loop_btn, bgm.loop, "\u21BB")
+        self._update_time(0.0, self._duration_of(bgm))
+        self.set_playing(False)
+
+    def set_bgm_state(self, *, playing: bool, paused: bool = False) -> None:
+        self.set_playing(playing and not paused)
+
+    def is_hotkey_enabled(self) -> bool:
+        return self._hotkey_btn.isChecked()
+
+    def is_loop_enabled(self) -> bool:
+        return self._loop_btn.isChecked()
+
+    def _retranslate_ui(self) -> None:
+        if self._device_label is not None:
+            self._device_label.setText("输出" if I18nManager.current_language() == "zh" else "Output")
+        if I18nManager.current_language() == "zh":
+            self._hotkey_btn.setToolTip("快捷键开关")
+            self._loop_btn.setToolTip("循环播放")
+            self._play_btn.setToolTip("播放 / 暂停")
+        else:
+            self._hotkey_btn.setToolTip("Hotkey Toggle")
+            self._loop_btn.setToolTip("Loop Playback")
+            self._play_btn.setToolTip("Play / Pause")

@@ -24,7 +24,7 @@ class Sidebar(QWidget):
         logo_layout = QHBoxLayout(logo_wrap)
         logo_layout.setContentsMargins(20, 0, 20, 0)
         logo_layout.setSpacing(10)
-        self.logo = QLabel("♪", logo_wrap)
+        self.logo = QLabel("", logo_wrap)
         self.logo.setStyleSheet("font-size: 20px; color: white; font-weight: 700;")
         self.title_label = QLabel(logo_wrap)
         self.title_label.setStyleSheet("font-size: 14px; font-weight: 700; color: white;")

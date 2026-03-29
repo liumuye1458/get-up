@@ -32,7 +32,7 @@ class FloatingWindow(QWidget):
         top_layout.setContentsMargins(8, 8, 8, 8)
         top_layout.setSpacing(8)
 
-        self.icon_label = QLabel("♪", top)
+        self.icon_label = QLabel("", top)
         self.icon_label.setStyleSheet("color: white; font-weight: 700;")
         self.title_label = QLabel(top)
         self.title_label.setStyleSheet("color: white; font-weight: 700;")

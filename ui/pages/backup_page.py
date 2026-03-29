@@ -19,6 +19,8 @@ from core.backup_manager import BackupManager
 from core.i18n_manager import I18nManager, t
 from models.db import db
 
+BACKUP_FILE_FILTER = "Backup Files (*.zip);;All Files (*)"
+
 
 class BackupPage(QWidget):
     def __init__(self, main_window=None, parent=None) -> None:
@@ -89,26 +91,30 @@ class BackupPage(QWidget):
             self,
             t("backup.export_button"),
             default_name,
-            "备份文件 (*.zip)",
+            BACKUP_FILE_FILTER,
         )
         if not path:
             return
-        try:
-            self._backup_manager.export_backup(path)
+        if self._main_window is not None and hasattr(self._main_window, "_do_export_backup"):
+            self._main_window._do_export_backup(path)
+            return
+
+        ok, message = self._backup_manager.export_backup(path)
+        if ok:
             QMessageBox.information(
                 self,
                 t("backup.export_success_title"),
                 t("backup.export_success_message", path=path),
             )
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, t("backup.export_fail_title"), str(exc))
+            return
+        QMessageBox.critical(self, t("backup.export_fail_title"), message)
 
     def _on_import(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
             t("backup.import_select_title"),
             "",
-            "备份文件 (*.zip)",
+            BACKUP_FILE_FILTER,
         )
         if not path:
             return

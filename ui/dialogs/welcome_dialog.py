@@ -3,13 +3,11 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from core.i18n_manager import t
-
 
 class WelcomeDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(t("welcome.title"))
+        self.setWindowTitle("HOTA SoundPad")
         self.setFixedSize(480, 400)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
         self._setup_ui()
@@ -19,32 +17,41 @@ class WelcomeDialog(QDialog):
         layout.setContentsMargins(36, 32, 36, 28)
         layout.setSpacing(14)
 
-        title = QLabel(t("welcome.title"))
+        title = QLabel("HOTA SoundPad")
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: #4a9eff;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        sub = QLabel(t("welcome.subtitle"))
+        sub = QLabel(
+            "为直播主播设计的专业音效管理工具\n"
+            "Professional Sound Effects Manager for Live Streamers"
+        )
         sub.setStyleSheet("font-size: 10px; color: #666677;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setWordWrap(True)
         layout.addWidget(sub)
 
         layout.addSpacing(8)
 
         features = [
-            ("●", t("welcome.feat1")),
-            ("●", t("welcome.feat2")),
-            ("●", t("welcome.feat3")),
-            ("●", t("welcome.feat4")),
-            ("●", t("welcome.feat5")),
+            "导入音效，一键触发，支持多路同时播放\n"
+            "Import sounds, one-click trigger, multi-track playback",
+            "背景音乐流式播放，循环控制，底部随时切换\n"
+            "BGM streaming, loop control, switch anytime from bottom bar",
+            "全局 / 局部快捷键，直播推流时也能操控\n"
+            "Global / local hotkeys, works while streaming",
+            "一键备份恢复，换电脑不丢数据\n"
+            "One-click backup & restore, never lose data",
+            "支持 MP3 / WAV / OGG / FLAC / WMA 等主流格式\n"
+            "Supports MP3 / WAV / OGG / FLAC / WMA and more",
         ]
-        for icon, text in features:
+        for text in features:
             row = QHBoxLayout()
             row.setSpacing(12)
 
-            dot = QLabel(icon)
+            dot = QLabel("-")
             dot.setFixedWidth(14)
-            dot.setStyleSheet("color: #4a9eff; font-size: 8px;")
+            dot.setStyleSheet("color: #4a9eff; font-size: 12px;")
             dot.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
 
             text_lbl = QLabel(text)
@@ -57,7 +64,7 @@ class WelcomeDialog(QDialog):
 
         layout.addStretch()
 
-        btn = QPushButton(t("welcome.start"))
+        btn = QPushButton("开始使用 / Get Started")
         btn.setFixedHeight(42)
         btn.setStyleSheet(
             """
